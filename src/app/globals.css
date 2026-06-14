@@ -1,0 +1,141 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'DM Sans', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+/* ─── Design tokens — dark orange (default) ─────────────────── */
+:root {
+  --bg1:          #13131A;
+  --bg2:          #1C1C26;
+  --bg3:          #222234;
+  --line:         #2A2A3E;
+  --line2:        #1F2233;
+  --ink:          #F0F2F8;
+  --ink2:         #D1D5DB;
+  --ink3:         #6B7280;
+  --accent:       #C97010;
+  --accent2:      #E88B1A;
+  --accent-dim:   rgba(201, 112, 16, 0.15);
+  --accent-dim2:  rgba(201, 112, 16, 0.08);
+  --accent-soft:  rgba(201, 112, 16, 0.6);
+  --logo-fg:      #ffffff;
+  --red:          #F87171;
+  --red-dim:      rgba(248, 113, 113, 0.1);
+  --green:        #00E676;
+  --green-dim:    rgba(0, 230, 118, 0.1);
+  --amber:        #FBBF24;
+  --purple:       #7C5CFC;
+  --secondary:    #7C5CFC;
+  --blue:         #2DD4BF;
+}
+
+[data-theme="black-orange"] {
+  --bg1:          #13131A;
+  --bg2:          #1C1C26;
+  --bg3:          #222234;
+  --line:         #2A2A3E;
+  --line2:        #1F2233;
+  --ink:          #F0F2F8;
+  --ink2:         #D1D5DB;
+  --ink3:         #6B7280;
+  --accent:       #C97010;
+  --accent2:      #E88B1A;
+  --accent-dim:   rgba(201, 112, 16, 0.15);
+  --accent-dim2:  rgba(201, 112, 16, 0.08);
+  --accent-soft:  rgba(201, 112, 16, 0.6);
+}
+
+[data-theme="black-green"] {
+  --bg1:          #0F1710;
+  --bg2:          #151F16;
+  --bg3:          #1C2B1D;
+  --line:         #243526;
+  --line2:        #1A271B;
+  --ink:          #E8F5EA;
+  --ink2:         #C5DCC8;
+  --ink3:         #6B8C70;
+  --accent:       #1AB870;
+  --accent2:      #25D87F;
+  --accent-dim:   rgba(26, 184, 112, 0.15);
+  --accent-dim2:  rgba(26, 184, 112, 0.08);
+  --accent-soft:  rgba(26, 184, 112, 0.6);
+  --green:        #1AB870;
+  --green-dim:    rgba(26, 184, 112, 0.1);
+}
+
+[data-theme="white-orange"] {
+  --bg1:          #F6F3EE;
+  --bg2:          #EDEAE4;
+  --bg3:          #E4E0D8;
+  --line:         #D4CFC5;
+  --line2:        #DDDAD2;
+  --ink:          #1A1A20;
+  --ink2:         #3D3D4A;
+  --ink3:         #6B6B7A;
+  --accent:       #B85C00;
+  --accent2:      #D47010;
+  --accent-dim:   rgba(184, 92, 0, 0.12);
+  --accent-dim2:  rgba(184, 92, 0, 0.06);
+  --accent-soft:  rgba(184, 92, 0, 0.6);
+  --red:          #DC2626;
+  --red-dim:      rgba(220, 38, 38, 0.08);
+  --green:        #059669;
+  --green-dim:    rgba(5, 150, 105, 0.1);
+  --amber:        #D97706;
+  --purple:       #7C3AED;
+  --secondary:    #7C3AED;
+  --blue:         #0891B2;
+}
+
+[data-theme="white-green"] {
+  --bg1:          #F2F7F4;
+  --bg2:          #E7F0EA;
+  --bg3:          #DCE9DF;
+  --line:         #C5D9CB;
+  --line2:        #D0E3D5;
+  --ink:          #0F1A12;
+  --ink2:         #2E3F33;
+  --ink3:         #5A7060;
+  --accent:       #0D8C4A;
+  --accent2:      #14A85A;
+  --accent-dim:   rgba(13, 140, 74, 0.12);
+  --accent-dim2:  rgba(13, 140, 74, 0.06);
+  --accent-soft:  rgba(13, 140, 74, 0.6);
+  --red:          #DC2626;
+  --red-dim:      rgba(220, 38, 38, 0.08);
+  --green:        #0D8C4A;
+  --green-dim:    rgba(13, 140, 74, 0.1);
+  --amber:        #D97706;
+  --purple:       #7C3AED;
+  --secondary:    #7C3AED;
+  --blue:         #0891B2;
+}
+
+/* ─── Shared utility ─────────────────────────────────────────── */
+.es-card {
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  padding: 1.25rem;
+}
+
+body {
+  font-family: 'DM Sans', sans-serif;
+  background: var(--bg1);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2E3648; border-radius: 10px; }
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-up { animation: fadeUp 0.3s ease; }

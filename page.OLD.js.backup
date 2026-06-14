@@ -1,0 +1,688 @@
+"use client";
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ *  SKIPCOMMAND — God-Mode Operations Dashboard
+ *  Pretoria Skip Waste Rental · Dispatch / Revenue / Asset Intelligence
+ *
+ *  Stack: Next.js (App Router) · React · Tailwind CSS · Recharts · lucide-react
+ *  Drop into: src/app/page.js
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+import { useState, useMemo } from "react";
+import {
+  ResponsiveContainer,
+  ComposedChart,
+  Area,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  PieChart,
+  Pie,
+  Cell,
+} from "recharts";
+import {
+  Truck,
+  Wallet,
+  AlertTriangle,
+  Sun,
+  Moon,
+  Container,
+  CalendarDays,
+  ArrowUpRight,
+  ArrowDownRight,
+  Radio,
+  CircleDot,
+  Clock4,
+  PhoneCall,
+  MapPin,
+  Layers,
+} from "lucide-react";
+
+/* ════════════════════════════════════════════════════════════════════════════
+   1 ▸ DATA LAYER — mock fallbacks (replace with Supabase/API fetches later)
+   Dates are generated relative to "now" so overdue logic is always live.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+const DAY = 86_400_000;
+const d = (daysAgo) => new Date(Date.now() - daysAgo * DAY).toISOString().slice(0, 10);
+
+/** Ad-hoc rentals — stochastic daily/weekly skip hires around Pretoria East/North */
+const invoices = [
+  { id: "INV-2401", client: "Buco Cash & Carry",      date: d(2),  items: "1× 6m³ Builders Rubble",   amount: 2850, collected: false },
+  { id: "INV-2402", client: "Hillcrest Projects",     date: d(3),  items: "2× 6m³ Mixed Waste",       amount: 5400, collected: false },
+  { id: "INV-2403", client: "Moot Plumbers",          date: d(4),  items: "1× 2m³ Garden Refuse",     amount: 1150, collected: true  },
+  { id: "INV-2404", client: "Lynnwood Renovations",   date: d(5),  items: "1× 3m³ Builders Rubble",   amount: 1680, collected: false },
+  { id: "INV-2405", client: "Waverley Demolishers",   date: d(6),  items: "2× 9m³ Demolition",        amount: 8200, collected: false },
+  { id: "INV-2406", client: "Die Wilgers Estates",    date: d(8),  items: "1× 6m³ Garden + Rubble",   amount: 2850, collected: false },
+  { id: "INV-2407", client: "Montana Tilers",         date: d(9),  items: "1× 3m³ Tile Off-cuts",     amount: 1680, collected: false },
+  { id: "INV-2408", client: "Silver Lakes HOA",       date: d(10), items: "1× 9m³ Green Waste",       amount: 4100, collected: false },
+  { id: "INV-2409", client: "Pta-Noord Sloopwerk",    date: d(11), items: "3× 6m³ Demolition",        amount: 8550, collected: false },
+  { id: "INV-2410", client: "Faerie Glen Pools",      date: d(12), items: "1× 6m³ Excavation Spoil",  amount: 2850, collected: true  },
+  { id: "INV-2411", client: "Gezina Motors",          date: d(13), items: "1× 2m³ Workshop Waste",    amount: 1150, collected: true  },
+  { id: "INV-2412", client: "Equestria Kitchens",     date: d(15), items: "1× 3m³ Reno Strip-out",    amount: 1680, collected: true  },
+  { id: "INV-2413", client: "Brooklyn Body Corp",     date: d(17), items: "2× 6m³ Mixed Waste",       amount: 5400, collected: true  },
+  { id: "INV-2414", client: "Annlin Paving",          date: d(19), items: "1× 9m³ Paving Rubble",     amount: 4100, collected: true  },
+  { id: "INV-2415", client: "Menlo Park Dental",      date: d(22), items: "1× 2m³ Office Refit",      amount: 1150, collected: true  },
+  { id: "INV-2416", client: "Wapadrand Builders",     date: d(25), items: "2× 3m³ Builders Rubble",   amount: 3360, collected: true  },
+];
+
+/** Guaranteed monthly recurring revenue — permanent skips on big sites */
+const contracts = [
+  { id: "CTR-001", client: "WBHO — Menlyn Maine Ph 3",   site: "Menlyn",       skips: 4, size: "9m³", mrr: 18400, since: "2025-02-01" },
+  { id: "CTR-002", client: "Raubex — N4 Interchange",    site: "Solomon Mahlangu", skips: 3, size: "9m³", mrr: 13800, since: "2025-06-15" },
+  { id: "CTR-003", client: "Group Five Civils",          site: "Rosslyn",      skips: 2, size: "6m³", mrr: 7600,  since: "2025-09-01" },
+  { id: "CTR-004", client: "Atterbury — The Club Ext",   site: "Hazelwood",    skips: 2, size: "6m³", mrr: 7600,  since: "2026-01-10" },
+  { id: "CTR-005", client: "Tshwane Mall Refurb JV",     site: "Pta West",     skips: 2, size: "3m³", mrr: 5200,  since: "2026-03-01" },
+];
+
+/** Physical asset inventory matrix — owned vs deployed per skip class */
+const skip_fleet = [
+  { size: "2m³", label: "Mini",     owned: 12, deployed: 9,  rate: 1150 },
+  { size: "3m³", label: "Midi",     owned: 14, deployed: 13, rate: 1680 },
+  { size: "6m³", label: "Builders", owned: 22, deployed: 20, rate: 2850 },
+  { size: "9m³", label: "Maxi",     owned: 10, deployed: 9,  rate: 4100 },
+];
+
+/** Standard rental window before a skip must be swapped/collected */
+const STANDARD_RENTAL_DAYS = 7;
+
+/* ════════════════════════════════════════════════════════════════════════════
+   2 ▸ FORMATTERS
+   ════════════════════════════════════════════════════════════════════════════ */
+
+const zar = new Intl.NumberFormat("en-ZA", {
+  style: "currency",
+  currency: "ZAR",
+  maximumFractionDigits: 0,
+});
+const zarFull = new Intl.NumberFormat("en-ZA", {
+  style: "currency",
+  currency: "ZAR",
+  minimumFractionDigits: 2,
+});
+const pct = (n) => `${n.toFixed(1)}%`;
+const longDate = new Intl.DateTimeFormat("en-ZA", {
+  weekday: "long",
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+});
+
+/* ════════════════════════════════════════════════════════════════════════════
+   3 ▸ THEME TOKENS
+   ════════════════════════════════════════════════════════════════════════════ */
+
+const THEMES = {
+  dark: {
+    page: "bg-[#0F0F13] text-zinc-100",
+    panel: "bg-white/[0.035] border border-white/[0.07] backdrop-blur-xl",
+    panelHover: "hover:border-white/[0.14]",
+    sub: "text-zinc-400",
+    faint: "text-zinc-500",
+    hairline: "border-white/[0.07]",
+    tableHead: "text-zinc-500",
+    rowHover: "hover:bg-white/[0.03]",
+    grid: "rgba(255,255,255,0.05)",
+    axis: "#71717a",
+    tooltipBg: "rgba(18,18,24,0.92)",
+    chip: "bg-white/[0.05] border border-white/[0.08]",
+    toggle: "bg-white/[0.06] border border-white/[0.1] hover:bg-white/[0.12]",
+  },
+  light: {
+    page: "bg-[#F4F4F1] text-zinc-900",
+    panel: "bg-white border border-zinc-200/80 backdrop-blur-xl shadow-sm",
+    panelHover: "hover:border-zinc-300",
+    sub: "text-zinc-500",
+    faint: "text-zinc-400",
+    hairline: "border-zinc-200",
+    tableHead: "text-zinc-400",
+    rowHover: "hover:bg-zinc-50",
+    grid: "rgba(0,0,0,0.06)",
+    axis: "#a1a1aa",
+    tooltipBg: "rgba(255,255,255,0.96)",
+    chip: "bg-zinc-100 border border-zinc-200",
+    toggle: "bg-white border border-zinc-200 hover:bg-zinc-100",
+  },
+};
+
+const ACCENT = {
+  mrr: "#22d3ee",     // contract base-load — steel cyan
+  adhoc: "#f59e0b",   // stochastic ad-hoc — safety amber (skip-bin orange)
+  ok: "#34d399",
+  danger: "#fb7185",
+};
+
+/* ════════════════════════════════════════════════════════════════════════════
+   4 ▸ DERIVED OPERATIONAL INTELLIGENCE
+   ════════════════════════════════════════════════════════════════════════════ */
+
+function useOps() {
+  return useMemo(() => {
+    const totalOwned = skip_fleet.reduce((s, f) => s + f.owned, 0);
+    const totalDeployed = skip_fleet.reduce((s, f) => s + f.deployed, 0);
+    const utilization = (totalDeployed / totalOwned) * 100;
+
+    const mrr = contracts.reduce((s, c) => s + c.mrr, 0);
+    const adhocMTD = invoices
+      .filter((i) => new Date(i.date).getMonth() === new Date().getMonth())
+      .reduce((s, i) => s + i.amount, 0);
+    const totalRevenue = mrr + adhocMTD;
+
+    const debtors = invoices.filter((i) => !i.collected);
+    const outstanding = debtors.reduce((s, i) => s + i.amount, 0);
+
+    const overdue = invoices
+      .filter((i) => !i.collected)
+      .map((i) => ({
+        ...i,
+        daysOut: Math.floor((Date.now() - new Date(i.date).getTime()) / DAY),
+      }))
+      .filter((i) => i.daysOut > STANDARD_RENTAL_DAYS)
+      .sort((a, b) => b.daysOut - a.daysOut);
+
+    /* Weekly revenue series — flat contract base-load vs stochastic ad-hoc */
+    const weeklyMRR = Math.round(mrr / 4.33);
+    const adhocPattern = [0.62, 1.18, 0.84, 1.31, 0.71, 1.05, 1.42, 0.97];
+    const meanAdhoc =
+      invoices.reduce((s, i) => s + i.amount, 0) / 4; // ~4 weeks of invoices
+    const series = adhocPattern.map((k, idx) => ({
+      week: `W${idx + 1}`,
+      contract: weeklyMRR,
+      adhoc: Math.round((meanAdhoc * k) / 50) * 50,
+    }));
+
+    return { totalOwned, totalDeployed, utilization, mrr, adhocMTD, totalRevenue, outstanding, debtors, overdue, series };
+  }, []);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   5 ▸ MICRO-COMPONENTS
+   ════════════════════════════════════════════════════════════════════════════ */
+
+function RevenueTooltip({ active, payload, label, dark }) {
+  if (!active || !payload?.length) return null;
+  const contract = payload.find((p) => p.dataKey === "contract")?.value ?? 0;
+  const adhoc = payload.find((p) => p.dataKey === "adhoc")?.value ?? 0;
+  return (
+    <div
+      className="rounded-xl border px-4 py-3 text-sm backdrop-blur-md"
+      style={{
+        background: dark ? "rgba(18,18,24,0.92)" : "rgba(255,255,255,0.96)",
+        borderColor: dark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.08)",
+        color: dark ? "#fafafa" : "#18181b",
+      }}
+    >
+      <p className="mb-2 text-xs font-semibold uppercase tracking-widest opacity-60">
+        {label} — revenue split
+      </p>
+      <div className="flex items-center justify-between gap-8 tabular-nums">
+        <span className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full" style={{ background: ACCENT.mrr }} />
+          Contract MRR
+        </span>
+        <span className="font-semibold">{zarFull.format(contract)}</span>
+      </div>
+      <div className="mt-1 flex items-center justify-between gap-8 tabular-nums">
+        <span className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full" style={{ background: ACCENT.adhoc }} />
+          Ad-hoc invoiced
+        </span>
+        <span className="font-semibold">{zarFull.format(adhoc)}</span>
+      </div>
+      <div
+        className="mt-2 flex items-center justify-between gap-8 border-t pt-2 tabular-nums"
+        style={{ borderColor: dark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)" }}
+      >
+        <span className="text-xs uppercase tracking-wider opacity-60">Total</span>
+        <span className="font-bold">{zarFull.format(contract + adhoc)}</span>
+      </div>
+    </div>
+  );
+}
+
+function KpiCard({ t, icon: Icon, label, value, delta, deltaUp, footnote, critical }) {
+  return (
+    <div
+      className={`relative overflow-hidden rounded-2xl p-5 transition-colors duration-300 ${t.panel} ${t.panelHover} ${
+        critical ? "!border-amber-500/40" : ""
+      }`}
+    >
+      {critical && (
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-amber-500/[0.12] via-transparent to-orange-600/[0.08]" />
+      )}
+      <div className="relative flex items-start justify-between">
+        <div>
+          <p className={`text-[11px] font-semibold uppercase tracking-[0.14em] ${critical ? "text-amber-400" : t.sub}`}>
+            {label}
+          </p>
+          <p className="mt-2 text-3xl font-bold tabular-nums tracking-tight">{value}</p>
+        </div>
+        <div
+          className={`rounded-xl p-2.5 ${
+            critical ? "bg-amber-500/15 text-amber-400" : `${t.chip} ${t.sub}`
+          }`}
+        >
+          <Icon size={20} strokeWidth={2} />
+        </div>
+      </div>
+      <div className="relative mt-3 flex items-center gap-2 text-xs">
+        {critical ? (
+          <span className="flex items-center gap-1.5 rounded-full bg-amber-500/15 px-2.5 py-1 font-semibold text-amber-400">
+            <AlertTriangle size={12} /> CAPACITY CRITICAL — order/repair stock
+          </span>
+        ) : (
+          <>
+            <span
+              className={`flex items-center gap-0.5 font-semibold tabular-nums ${
+                deltaUp ? "text-emerald-400" : "text-rose-400"
+              }`}
+            >
+              {deltaUp ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}
+              {delta}
+            </span>
+            <span className={t.faint}>{footnote}</span>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Dispatch-board capacity row — each cell is one physical skip */
+function FleetRow({ t, fleet, dark }) {
+  const inYard = fleet.owned - fleet.deployed;
+  const ratio = fleet.deployed / fleet.owned;
+  const hot = ratio >= 0.9;
+  return (
+    <div className="py-3.5 first:pt-1 last:pb-1">
+      <div className="mb-2 flex items-baseline justify-between">
+        <div className="flex items-center gap-2.5">
+          <span className="text-sm font-bold tabular-nums">{fleet.size}</span>
+          <span className={`text-xs ${t.faint}`}>{fleet.label}</span>
+          {hot && (
+            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-400">
+              At capacity
+            </span>
+          )}
+        </div>
+        <span className={`text-xs tabular-nums ${t.sub}`}>
+          <span className="font-semibold" style={{ color: hot ? ACCENT.adhoc : ACCENT.mrr }}>
+            {fleet.deployed}
+          </span>{" "}
+          on-site · {inYard} in-yard
+        </span>
+      </div>
+      <div className="flex gap-1">
+        {Array.from({ length: fleet.owned }).map((_, i) => {
+          const out = i < fleet.deployed;
+          return (
+            <div
+              key={i}
+              title={out ? "On-site" : "In-yard"}
+              className="h-5 flex-1 rounded-[3px] transition-all duration-300"
+              style={{
+                background: out
+                  ? hot
+                    ? "linear-gradient(180deg, #fbbf24, #d97706)"
+                    : "linear-gradient(180deg, #22d3ee, #0891b2)"
+                  : dark
+                  ? "rgba(255,255,255,0.06)"
+                  : "rgba(0,0,0,0.07)",
+              }}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   6 ▸ PAGE
+   ════════════════════════════════════════════════════════════════════════════ */
+
+export default function Page() {
+  const [dark, setDark] = useState(true);
+  const t = THEMES[dark ? "dark" : "light"];
+  const ops = useOps();
+
+  const utilizationCritical = ops.utilization > 85;
+  const donutData = [
+    { name: "On-site", value: ops.totalDeployed },
+    { name: "In-yard", value: ops.totalOwned - ops.totalDeployed },
+  ];
+
+  return (
+    <main
+      className={`min-h-screen px-4 py-6 font-sans antialiased transition-colors duration-300 sm:px-8 ${t.page}`}
+      style={{ fontFeatureSettings: '"tnum" 1, "ss01" 1' }}
+    >
+      <div className="mx-auto max-w-[1440px]">
+        {/* ── HEADER ─────────────────────────────────────────────────────── */}
+        <header className="mb-7 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <div className="grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br from-amber-400 to-orange-600 text-[#0F0F13]">
+              <Container size={22} strokeWidth={2.4} />
+            </div>
+            <div>
+              <h1 className="text-xl font-extrabold tracking-tight">
+                SkipCommand
+                <span className={`ml-2.5 align-middle text-[10px] font-bold uppercase tracking-[0.2em] ${t.faint}`}>
+                  Ops Console · PTA
+                </span>
+              </h1>
+              <p className={`flex items-center gap-1.5 text-xs ${t.sub}`}>
+                <CalendarDays size={12} />
+                {longDate.format(new Date())}
+                <span className={`mx-1 ${t.faint}`}>·</span>
+                <Radio size={12} className="text-emerald-400" />
+                <span className="text-emerald-400">Dispatch live</span>
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => setDark((v) => !v)}
+            aria-label="Toggle theme"
+            className={`flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-medium transition-colors ${t.toggle}`}
+          >
+            {dark ? <Sun size={16} /> : <Moon size={16} />}
+            {dark ? "Light" : "Dark"}
+          </button>
+        </header>
+
+        {/* ── 12-COL GRID ────────────────────────────────────────────────── */}
+        <div className="grid grid-cols-12 gap-4">
+          {/* TOP ROW — DISPATCH KPIs */}
+          <div className="col-span-12 md:col-span-4">
+            <KpiCard
+              t={t}
+              icon={Truck}
+              label="Active Fleet Utilization"
+              value={pct(ops.utilization)}
+              critical={utilizationCritical}
+              delta="+4.2 pts"
+              deltaUp
+              footnote="vs last week"
+            />
+          </div>
+          <div className="col-span-12 md:col-span-4">
+            <KpiCard
+              t={t}
+              icon={Wallet}
+              label="Total Revenue · MRR + Ad-hoc"
+              value={zar.format(ops.totalRevenue)}
+              delta="+11.8%"
+              deltaUp
+              footnote={`${zar.format(ops.mrr)} contracted base-load`}
+            />
+          </div>
+          <div className="col-span-12 md:col-span-4">
+            <KpiCard
+              t={t}
+              icon={Clock4}
+              label="Outstanding Debtors"
+              value={zar.format(ops.outstanding)}
+              delta={`${ops.debtors.length} invoices`}
+              deltaUp={false}
+              footnote="uncollected / unbanked"
+            />
+          </div>
+
+          {/* MIDDLE LEFT — REVENUE ENGINE */}
+          <section className={`col-span-12 rounded-2xl p-5 lg:col-span-8 ${t.panel}`}>
+            <div className="mb-1 flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-bold uppercase tracking-[0.14em]">Revenue Engine</h2>
+                <p className={`text-xs ${t.sub}`}>
+                  Predictable contract base-load vs stochastic ad-hoc hire · weekly, ZAR
+                </p>
+              </div>
+              <div className={`flex items-center gap-4 rounded-lg px-3 py-1.5 text-xs ${t.chip}`}>
+                <span className="flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-sm" style={{ background: ACCENT.mrr }} />
+                  Contract MRR
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-sm" style={{ background: ACCENT.adhoc }} />
+                  Ad-hoc invoiced
+                </span>
+              </div>
+            </div>
+
+            <div className="h-[340px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={ops.series} margin={{ top: 18, right: 8, left: 8, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="gAdhoc" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={ACCENT.adhoc} stopOpacity={0.55} />
+                      <stop offset="55%" stopColor={ACCENT.adhoc} stopOpacity={0.16} />
+                      <stop offset="100%" stopColor={ACCENT.adhoc} stopOpacity={0.02} />
+                    </linearGradient>
+                    <linearGradient id="gMrr" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={ACCENT.mrr} stopOpacity={0.9} />
+                      <stop offset="100%" stopColor={ACCENT.mrr} stopOpacity={0.25} />
+                    </linearGradient>
+                  </defs>
+
+                  <CartesianGrid stroke={t.grid} vertical={false} />
+                  <XAxis
+                    dataKey="week"
+                    stroke={t.axis}
+                    tickLine={false}
+                    axisLine={false}
+                    tick={{ fontSize: 12 }}
+                    dy={6}
+                  />
+                  <YAxis
+                    stroke={t.axis}
+                    tickLine={false}
+                    axisLine={false}
+                    tick={{ fontSize: 12 }}
+                    tickFormatter={(v) => `R${(v / 1000).toFixed(0)}k`}
+                    width={52}
+                  />
+                  <Tooltip
+                    cursor={{ fill: dark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.03)" }}
+                    content={<RevenueTooltip dark={dark} />}
+                  />
+                  <Bar
+                    dataKey="contract"
+                    name="Contract MRR"
+                    fill="url(#gMrr)"
+                    radius={[6, 6, 0, 0]}
+                    barSize={34}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="adhoc"
+                    name="Ad-hoc invoiced"
+                    stroke={ACCENT.adhoc}
+                    strokeWidth={2.5}
+                    fill="url(#gAdhoc)"
+                    dot={{ r: 3, fill: ACCENT.adhoc, strokeWidth: 0 }}
+                    activeDot={{ r: 5, fill: ACCENT.adhoc, stroke: "#0F0F13", strokeWidth: 2 }}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Contract book strip */}
+            <div className={`mt-2 grid grid-cols-1 gap-2 border-t pt-4 sm:grid-cols-3 lg:grid-cols-5 ${t.hairline}`}>
+              {contracts.map((c) => (
+                <div key={c.id} className={`rounded-xl px-3 py-2.5 ${t.chip}`}>
+                  <p className="truncate text-xs font-semibold">{c.client}</p>
+                  <p className={`mt-0.5 flex items-center gap-1 text-[11px] ${t.faint}`}>
+                    <MapPin size={10} /> {c.site} · {c.skips}× {c.size}
+                  </p>
+                  <p className="mt-1 text-sm font-bold tabular-nums" style={{ color: ACCENT.mrr }}>
+                    {zar.format(c.mrr)}
+                    <span className={`text-[10px] font-medium ${t.faint}`}>/mo</span>
+                  </p>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* MIDDLE RIGHT — ASSET MATRIX */}
+          <section className={`col-span-12 rounded-2xl p-5 lg:col-span-4 ${t.panel}`}>
+            <div className="mb-3 flex items-start justify-between">
+              <div>
+                <h2 className="text-sm font-bold uppercase tracking-[0.14em]">Asset Matrix</h2>
+                <p className={`text-xs ${t.sub}`}>Physical skips · on-site vs in-yard</p>
+              </div>
+              <Layers size={18} className={t.faint} />
+            </div>
+
+            {/* Overall donut */}
+            <div className="relative mx-auto h-[170px] w-[170px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <defs>
+                    <linearGradient id="gDonut" x1="0" y1="0" x2="1" y2="1">
+                      <stop offset="0%" stopColor="#fbbf24" />
+                      <stop offset="100%" stopColor="#ea580c" />
+                    </linearGradient>
+                  </defs>
+                  <Pie
+                    data={donutData}
+                    dataKey="value"
+                    innerRadius={58}
+                    outerRadius={78}
+                    startAngle={90}
+                    endAngle={-270}
+                    paddingAngle={3}
+                    stroke="none"
+                  >
+                    <Cell fill="url(#gDonut)" />
+                    <Cell fill={dark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)"} />
+                  </Pie>
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="pointer-events-none absolute inset-0 grid place-items-center">
+                <div className="text-center">
+                  <p className="text-2xl font-extrabold tabular-nums tracking-tight">
+                    {ops.totalDeployed}
+                    <span className={`text-sm font-semibold ${t.faint}`}>/{ops.totalOwned}</span>
+                  </p>
+                  <p className={`text-[10px] font-semibold uppercase tracking-[0.16em] ${t.sub}`}>
+                    Deployed
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Per-size dispatch board */}
+            <div className={`mt-2 divide-y ${dark ? "divide-white/[0.06]" : "divide-zinc-100"}`}>
+              {skip_fleet.map((f) => (
+                <FleetRow key={f.size} t={t} fleet={f} dark={dark} />
+              ))}
+            </div>
+
+            <div className={`mt-3 flex items-center gap-4 border-t pt-3 text-[11px] ${t.hairline} ${t.faint}`}>
+              <span className="flex items-center gap-1.5">
+                <CircleDot size={11} style={{ color: ACCENT.mrr }} /> On-site, earning
+              </span>
+              <span className="flex items-center gap-1.5">
+                <CircleDot size={11} style={{ color: ACCENT.adhoc }} /> ≥90% class capacity
+              </span>
+            </div>
+          </section>
+
+          {/* BOTTOM ROW — OVERDUE COLLECTIONS */}
+          <section className={`col-span-12 rounded-2xl p-5 ${t.panel}`}>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-[0.14em]">
+                  Overdue Collections
+                  <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-bold tabular-nums text-rose-400">
+                    {ops.overdue.length}
+                  </span>
+                </h2>
+                <p className={`text-xs ${t.sub}`}>
+                  Skips beyond the {STANDARD_RENTAL_DAYS}-day standard hire — dispatch swap-out or collection now
+                </p>
+              </div>
+              <span className={`text-xs tabular-nums ${t.faint}`}>
+                Value at risk:{" "}
+                <span className="font-semibold text-rose-400">
+                  {zar.format(ops.overdue.reduce((s, i) => s + i.amount, 0))}
+                </span>
+              </span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[760px] text-sm">
+                <thead>
+                  <tr className={`border-b text-left text-[11px] font-semibold uppercase tracking-[0.12em] ${t.hairline} ${t.tableHead}`}>
+                    <th className="pb-2.5 pr-4">Invoice</th>
+                    <th className="pb-2.5 pr-4">Client</th>
+                    <th className="pb-2.5 pr-4">On-site since</th>
+                    <th className="pb-2.5 pr-4">Items</th>
+                    <th className="pb-2.5 pr-4 text-right">Amount</th>
+                    <th className="pb-2.5 pr-4 text-right">Days out</th>
+                    <th className="pb-2.5 text-right">Status</th>
+                  </tr>
+                </thead>
+                <tbody className={`divide-y ${dark ? "divide-white/[0.05]" : "divide-zinc-100"}`}>
+                  {ops.overdue.map((row) => {
+                    const severe = row.daysOut > STANDARD_RENTAL_DAYS + 5;
+                    return (
+                      <tr key={row.id} className={`transition-colors ${t.rowHover}`}>
+                        <td className={`py-3 pr-4 font-mono text-xs ${t.sub}`}>{row.id}</td>
+                        <td className="py-3 pr-4 font-medium">{row.client}</td>
+                        <td className={`py-3 pr-4 tabular-nums ${t.sub}`}>{row.date}</td>
+                        <td className={`py-3 pr-4 ${t.sub}`}>{row.items}</td>
+                        <td className="py-3 pr-4 text-right font-semibold tabular-nums">
+                          {zar.format(row.amount)}
+                        </td>
+                        <td
+                          className={`py-3 pr-4 text-right font-bold tabular-nums ${
+                            severe ? "text-rose-400" : "text-amber-400"
+                          }`}
+                        >
+                          {row.daysOut}d
+                        </td>
+                        <td className="py-3 text-right">
+                          <span
+                            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                              severe
+                                ? "bg-rose-500/12 text-rose-400 ring-1 ring-rose-500/25"
+                                : "bg-amber-500/12 text-amber-400 ring-1 ring-amber-500/25"
+                            }`}
+                          >
+                            {severe ? <PhoneCall size={11} /> : <AlertTriangle size={11} />}
+                            {severe ? "Escalate" : "Dispatch"}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {ops.overdue.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className={`py-8 text-center text-sm ${t.faint}`}>
+                        No skips beyond the standard hire window. Yard is clean.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <footer className={`mt-6 flex items-center justify-between text-[11px] ${t.faint}`}>
+          <span>SkipCommand v1.0 · mock data layer — wire to Supabase when ready</span>
+          <span className="tabular-nums">
+            {skip_fleet.length} skip classes · {contracts.length} contracts · {invoices.length} invoices
+          </span>
+        </footer>
+      </div>
+    </main>
+  );
+}

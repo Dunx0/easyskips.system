@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 220" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif">
+  <!-- ═══ CONCEPT 1 · "THE TIPPER" ═══
+       A pure geometric skip silhouette (the trapezoid every South African
+       recognises from the roadside) with an upward chevron cut out of the
+       body — lift, dispatch, growth. Confident, minimal, reads at 16px. -->
+  <defs>
+    <linearGradient id="amber" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0%" stop-color="#FBBF24"/>
+      <stop offset="100%" stop-color="#EA580C"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="10" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- presentation card -->
+  <rect width="640" height="220" rx="24" fill="#0F0F13"/>
+  <rect x="0.5" y="0.5" width="639" height="219" rx="23.5" fill="none" stroke="#FFFFFF" stroke-opacity="0.07"/>
+
+  <!-- ICON -->
+  <g transform="translate(52,52)" filter="url(#glow)">
+    <!-- skip body: wide-top trapezoid with chevron notch cut from the rim -->
+    <path d="M4 22
+             L34 22 L51 44 L68 22 L98 22
+             L84 96
+             Q83 102 77 102
+             L25 102
+             Q19 102 18 96
+             Z"
+          fill="url(#amber)"/>
+    <!-- rim lip -->
+    <path d="M0 14 L34 14 L38 22 L4 22 Z" fill="url(#amber)" opacity="0.85"/>
+    <path d="M68 22 L64 14 L102 14 L98 22 Z" fill="url(#amber)" opacity="0.85"/>
+    <!-- inner chevron echo (lift arrow) -->
+    <path d="M40 62 L51 48 L62 62" fill="none" stroke="#0F0F13" stroke-width="7"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- WORDMARK -->
+  <text x="200" y="118" font-size="44" font-weight="800" letter-spacing="-1.5" fill="#FAFAFA">Skip<tspan fill="url(#amber)">Command</tspan></text>
+  <text x="202" y="148" font-size="13" font-weight="700" letter-spacing="5" fill="#71717A">OPS CONSOLE · WASTE LOGISTICS</text>
+</svg>
