@@ -2,16 +2,16 @@
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────
- *  DISPATCH & BILLING — src/app/dispatch/page.js   (v2)
+ *  DISPATCH & BILLING — src/app/dispatch/page.js   (v3)
  *
- *  New in v2:
- *   · Location field on every delivery (written to invoices.location)
- *   · CONTRACT BUDGET BRAIN: if the client name matches a contract client,
- *     the form flags it — the contract's MRR covers N permanent skips, so
- *     this delivery is an EXTRA. The admin chooses:
- *        (a) Bill as separate ad-hoc invoice, linked via contract_id  (default)
- *        (b) Adjust the contract instead (skips + MRR) — no invoice created
- *  Requires: migration-contract-location.sql
+ *  New in v3:
+ *   · MULTI-SKIP LINE ITEMS on both forms. Add any number of size+qty rows;
+ *     amount / MRR auto-sum and stay editable. items string is built as
+ *     "2× 6m³, 1× 9m³" — compatible with parseQty + Contract Budget Brain.
+ *   · Optional invoice_line_items / contract_line_items inserts (best-effort;
+ *     skipped silently if those tables don't exist yet).
+ *
+ *  Preserved from v2: location field, Contract Budget Brain, toast, theme.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -21,7 +21,7 @@ import { useTheme } from "@/components/AppShell";
 import {
   Truck, FileSignature, Container, CalendarDays, User, MapPin, Banknote,
   CreditCard, Loader2, CheckCircle2, XCircle, Send, Hash, Gauge, X,
-  AlertTriangle, Scale,
+  AlertTriangle, Scale, Plus, Trash2,
 } from "lucide-react";
 
 /* ── rate card & options ─────────────────────────────────────────────────── */
@@ -39,6 +39,15 @@ const DRIVERS = ["Sipho M.", "Johan v.d. Berg", "Thabo K.", "Pieter S."];
 const zar = new Intl.NumberFormat("en-ZA", { style: "currency", currency: "ZAR", maximumFractionDigits: 0 });
 const today = () => new Date().toISOString().slice(0, 10);
 const genInvoiceId = () => `INV-${String(Date.now()).slice(-6)}`;
+
+const rateFor = (size, hire) => {
+  const r = SKIP_SIZES.find((x) => x.size === size);
+  return r ? r[hire.toLowerCase()] : 0;
+};
+
+/* build "2× 6m³, 1× 9m³" from line items */
+const buildItemsString = (lines) =>
+  lines.map((l) => `${l.qty}× ${l.size}`).join(", ");
 
 function parseQty(items) {
   if (!items) return 0;
@@ -58,6 +67,7 @@ const T = {
     select: "bg-[#16161c] border border-white/[0.09] text-zinc-100 focus:border-amber-400/60",
     chip: "bg-white/[0.05] border border-white/[0.08]",
     segOff: "text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.06]",
+    lineRow: "border-white/[0.07]",
   },
   light: {
     panel: "bg-white border border-zinc-200 shadow-sm",
@@ -66,6 +76,7 @@ const T = {
     select: "bg-white border border-zinc-300 text-zinc-900 focus:border-amber-500",
     chip: "bg-zinc-100 border border-zinc-200",
     segOff: "text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100",
+    lineRow: "border-zinc-200",
   },
 };
 
@@ -112,24 +123,91 @@ function SubmitButton({ busy, label, busyLabel, icon: Icon }) {
   );
 }
 
+/* ── LINE ITEM BUILDER ───────────────────────────────────────────────────────
+   lines: [{ size, qty, price }]  · priceLabel toggles "unit"/"per-mo" wording */
+function LineItems({ s, lines, setLines, hire, priceMode }) {
+  // priceMode: "hire" → default price from rate card by hire type
+  //            "monthly" → default from monthly column (contracts)
+  const defaultPrice = (size) =>
+    priceMode === "monthly" ? rateFor(size, "Monthly") : rateFor(size, hire);
+
+  const update = (idx, key, val) =>
+    setLines((prev) => prev.map((l, i) => (i === idx ? { ...l, [key]: val } : l)));
+
+  const changeSize = (idx, size) =>
+    setLines((prev) => prev.map((l, i) =>
+      i === idx ? { ...l, size, price: defaultPrice(size) } : l));
+
+  const addLine = () => {
+    const used = new Set(lines.map((l) => l.size));
+    const next = SKIP_SIZES.find((x) => !used.has(x.size))?.size ?? "6m³";
+    setLines((prev) => [...prev, { size: next, qty: 1, price: defaultPrice(next) }]);
+  };
+
+  const removeLine = (idx) => setLines((prev) => prev.filter((_, i) => i !== idx));
+
+  return (
+    <div className="space-y-2">
+      <div className={`grid grid-cols-[1fr_64px_104px_92px_32px] gap-2 px-1 text-[10px] font-semibold uppercase tracking-[0.1em] ${s.faint}`}>
+        <span>Skip size</span><span>Qty</span><span>{priceMode === "monthly" ? "Rate/mo" : "Price"}</span><span className="text-right">Total</span><span />
+      </div>
+
+      {lines.map((line, idx) => (
+        <div key={idx} className="grid grid-cols-[1fr_64px_104px_92px_32px] items-center gap-2">
+          <select value={line.size} onChange={(e) => changeSize(idx, e.target.value)}
+            className={`rounded-lg px-2.5 py-2 text-sm outline-none ${s.select}`}>
+            {SKIP_SIZES.map((x) => <option key={x.size} value={x.size}>{x.label}</option>)}
+          </select>
+
+          <input type="number" min="1" value={line.qty}
+            onChange={(e) => update(idx, "qty", Math.max(1, parseInt(e.target.value) || 1))}
+            className={`rounded-lg px-2.5 py-2 text-sm tabular-nums outline-none ${s.input}`} />
+
+          <input type="number" min="0" step="50" value={line.price}
+            onChange={(e) => update(idx, "price", Number(e.target.value) || 0)}
+            className={`rounded-lg px-2.5 py-2 text-sm tabular-nums outline-none ${s.input}`} />
+
+          <span className="text-right text-sm font-semibold tabular-nums">
+            {zar.format(line.qty * line.price)}
+          </span>
+
+          <button type="button" onClick={() => removeLine(idx)} disabled={lines.length === 1}
+            aria-label="Remove line"
+            className={`grid h-8 w-8 place-items-center rounded-lg border ${s.lineRow} ${s.faint} transition-colors hover:border-rose-400/50 hover:text-rose-400 disabled:opacity-30`}>
+            <Trash2 size={13} />
+          </button>
+        </div>
+      ))}
+
+      <button type="button" onClick={addLine}
+        className={`flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed py-2 text-xs font-medium ${s.lineRow} ${s.sub} transition-colors hover:border-amber-400/50 hover:text-amber-400`}>
+        <Plus size={13} /> Add another skip size
+      </button>
+    </div>
+  );
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
    PAGE
    ════════════════════════════════════════════════════════════════════════════ */
 
 const EMPTY_DELIVERY = {
-  client: "", date: today(), size: "6m³", hire: "Weekly", payment: "EFT",
-  driver: DRIVERS[0], vehicle: VEHICLES[0], amount: 2850, location: "",
+  client: "", date: today(), hire: "Weekly", payment: "EFT",
+  driver: DRIVERS[0], vehicle: VEHICLES[0], location: "",
 };
-const EMPTY_CONTRACT = { client: "", site: "", skips: 1, size: "6m³", mrr: "" };
+const EMPTY_CONTRACT = { client: "", site: "" };
 
 export default function DispatchPage() {
   const { dark } = useTheme();
   const s = T[dark ? "dark" : "light"];
 
   const [delivery, setDelivery] = useState(EMPTY_DELIVERY);
+  const [invLines, setInvLines] = useState([{ size: "6m³", qty: 1, price: rateFor("6m³", "Weekly") }]);
   const [contractForm, setContractForm] = useState(EMPTY_CONTRACT);
+  const [contractLines, setContractLines] = useState([{ size: "6m³", qty: 1, price: rateFor("6m³", "Monthly") }]);
+
   const [contracts, setContracts] = useState([]);
-  const [openExtras, setOpenExtras] = useState([]); // uncollected invoices linked to contracts
+  const [openExtras, setOpenExtras] = useState([]);
   const [clientNames, setClientNames] = useState([]);
   const [submittingInvoice, setSubmittingInvoice] = useState(false);
   const [submittingContract, setSubmittingContract] = useState(false);
@@ -154,17 +232,28 @@ export default function DispatchPage() {
     return () => clearTimeout(id);
   }, [toast]);
 
-  const suggested = useCallback((size, hire) => {
-    const r = SKIP_SIZES.find((x) => x.size === size);
-    return r ? r[hire.toLowerCase()] : "";
-  }, []);
-
+  /* when hire type changes, refresh default prices on invoice lines */
   const setDeliveryField = (key, value) =>
     setDelivery((prev) => {
       const next = { ...prev, [key]: value };
-      if (key === "size" || key === "hire") next.amount = suggested(next.size, next.hire);
       return next;
     });
+
+  const onHireChange = (v) => {
+    setDeliveryField("hire", v);
+    // re-default invoice line prices to the new hire rate
+    setInvLines((prev) => prev.map((l) => ({ ...l, price: rateFor(l.size, v) })));
+  };
+
+  /* totals */
+  const invoiceAmount = useMemo(
+    () => invLines.reduce((sum, l) => sum + l.qty * l.price, 0), [invLines]);
+  const invoiceSkips = useMemo(
+    () => invLines.reduce((sum, l) => sum + l.qty, 0), [invLines]);
+  const contractMrr = useMemo(
+    () => contractLines.reduce((sum, l) => sum + l.qty * l.price, 0), [contractLines]);
+  const contractSkips = useMemo(
+    () => contractLines.reduce((sum, l) => sum + l.qty, 0), [contractLines]);
 
   /* ── CONTRACT BUDGET BRAIN ────────────────────────────────────────────── */
   const matchedContract = useMemo(() => {
@@ -181,20 +270,35 @@ export default function DispatchPage() {
       .filter((e) => e.contract_id === matchedContract.id)
       .reduce((sum, e) => sum + parseQty(e.items), 0);
     return {
-      covered: matchedContract.skips,           // skips the MRR pays for
-      extrasOut,                                // extra skips already on site, billed separately
-      afterThis: matchedContract.skips + extrasOut + 1,
+      covered: matchedContract.skips,
+      extrasOut,
+      afterThis: matchedContract.skips + extrasOut + invoiceSkips,
     };
-  }, [matchedContract, openExtras]);
+  }, [matchedContract, openExtras, invoiceSkips]);
 
-  /* adjust contract instead of invoicing: +1 skip, pro-rata MRR uplift */
+  /* best-effort line-item insert; ignores missing table */
+  async function insertInvoiceLineItems(invoiceId, lines) {
+    try {
+      await supabase.from("invoice_line_items").insert(
+        lines.map((l) => ({ invoice_id: invoiceId, skip_size: l.size, quantity: l.qty, unit_price: l.price }))
+      );
+    } catch { /* table may not exist yet — header already saved */ }
+  }
+  async function insertContractLineItems(contractId, lines) {
+    try {
+      await supabase.from("contract_line_items").insert(
+        lines.map((l) => ({ contract_id: contractId, skip_size: l.size, quantity: l.qty, monthly_rate: l.price }))
+      );
+    } catch { /* table may not exist yet */ }
+  }
+
   async function adjustContract() {
     if (!matchedContract || adjusting) return;
     setAdjusting(true);
     try {
-      const perSkip = matchedContract.mrr / matchedContract.skips; // current per-skip rate
-      const newSkips = matchedContract.skips + 1;
-      const newMrr = Math.round(matchedContract.mrr + perSkip);
+      const perSkip = matchedContract.mrr / matchedContract.skips;
+      const newSkips = matchedContract.skips + invoiceSkips;
+      const newMrr = Math.round(matchedContract.mrr + perSkip * invoiceSkips);
       const { error } = await supabase
         .from("contracts")
         .update({ skips: newSkips, mrr: newMrr })
@@ -202,9 +306,10 @@ export default function DispatchPage() {
       if (error) throw new Error(error.message);
       setToast({
         type: "success",
-        msg: `${matchedContract.id} adjusted → ${newSkips}× skips @ ${zar.format(newMrr)}/mo. No invoice created — dispatch the skip via the run sheet.`,
+        msg: `${matchedContract.id} adjusted → ${newSkips}× skips @ ${zar.format(newMrr)}/mo. No invoice created — dispatch via the run sheet.`,
       });
       setDelivery({ ...EMPTY_DELIVERY, date: today() });
+      setInvLines([{ size: "6m³", qty: 1, price: rateFor("6m³", "Weekly") }]);
       loadContext();
     } catch (err) {
       setToast({ type: "error", msg: `Adjustment failed: ${err.message}` });
@@ -213,7 +318,7 @@ export default function DispatchPage() {
     }
   }
 
-  /* ── SUBMIT: invoice (links contract_id when client is on contract) ───── */
+  /* ── SUBMIT: invoice ──────────────────────────────────────────────────── */
   async function handleDeliverySubmit(e) {
     e.preventDefault();
     if (submittingInvoice) return;
@@ -224,24 +329,26 @@ export default function DispatchPage() {
         id,
         client: delivery.client.trim(),
         date: delivery.date,
-        items: `1× ${delivery.size} Skip`,
-        amount: Number(delivery.amount) || 0,
+        items: buildItemsString(invLines),
+        amount: invoiceAmount,
         banked: false, collected: false,
         hire: delivery.hire, payment: delivery.payment,
         vehicle: delivery.vehicle, driver: delivery.driver,
         location: delivery.location.trim() || null,
-        contract_id: matchedContract?.id ?? null,   // flags this as a contract extra
+        contract_id: matchedContract?.id ?? null,
       };
       const { data: saved, error } = await supabase.from("invoices").insert([row]).select().single();
       if (error) throw new Error(error.message);
+      await insertInvoiceLineItems(saved?.id ?? id, invLines);
       await supabase.from("clients").upsert({ name: row.client }, { onConflict: "name", ignoreDuplicates: true });
       setToast({
         type: "success",
         msg: matchedContract
-          ? `${saved.id ?? id} logged as CONTRACT EXTRA for ${matchedContract.id} — ${zar.format(row.amount)}`
-          : `Invoice ${saved.id ?? id} logged — ${row.client}, ${zar.format(row.amount)}`,
+          ? `${saved?.id ?? id} logged as CONTRACT EXTRA for ${matchedContract.id} — ${invoiceSkips} skip${invoiceSkips !== 1 ? "s" : ""}, ${zar.format(row.amount)}`
+          : `Invoice ${saved?.id ?? id} logged — ${row.client}, ${invoiceSkips} skip${invoiceSkips !== 1 ? "s" : ""}, ${zar.format(row.amount)}`,
       });
       setDelivery({ ...EMPTY_DELIVERY, date: today() });
+      setInvLines([{ size: "6m³", qty: 1, price: rateFor("6m³", "Weekly") }]);
       loadContext();
     } catch (err) {
       setToast({ type: "error", msg: `Invoice failed: ${err.message}` });
@@ -250,24 +357,28 @@ export default function DispatchPage() {
     }
   }
 
-  /* ── SUBMIT: new contract ─────────────────────────────────────────────── */
+  /* ── SUBMIT: contract ─────────────────────────────────────────────────── */
   async function handleContractSubmit(e) {
     e.preventDefault();
     if (submittingContract) return;
     setSubmittingContract(true);
     try {
+      // legacy columns: store summed skips, largest-line size, summed mrr
+      const primarySize = [...contractLines].sort((a, b) => b.qty - a.qty)[0]?.size ?? "6m³";
       const row = {
         client: contractForm.client.trim(),
         site: contractForm.site.trim(),
-        skips: Number(contractForm.skips) || 1,
-        size: contractForm.size,
-        mrr: Number(contractForm.mrr) || 0,
+        skips: contractSkips,
+        size: primarySize,
+        mrr: contractMrr,
         since: today(),
       };
       const { data: saved, error } = await supabase.from("contracts").insert([row]).select().single();
       if (error) throw new Error(error.message);
-      setToast({ type: "success", msg: `Contract registered — ${saved.client ?? row.client} @ ${zar.format(row.mrr)}/mo` });
+      await insertContractLineItems(saved?.id, contractLines);
+      setToast({ type: "success", msg: `Contract registered — ${saved?.client ?? row.client}, ${contractSkips} skips @ ${zar.format(row.mrr)}/mo` });
       setContractForm(EMPTY_CONTRACT);
+      setContractLines([{ size: "6m³", qty: 1, price: rateFor("6m³", "Monthly") }]);
       loadContext();
     } catch (err) {
       setToast({ type: "error", msg: `Contract failed: ${err.message}` });
@@ -288,7 +399,7 @@ export default function DispatchPage() {
             <span className={`ml-2.5 align-middle text-[10px] font-bold uppercase tracking-[0.2em] ${s.faint}`}>Admin Console</span>
           </h1>
           <p className={`mt-1 flex items-center gap-1.5 text-xs ${s.sub}`}>
-            <CalendarDays size={12} /> Log deliveries and register contract clients — contract clients are auto-detected
+            <CalendarDays size={12} /> Log deliveries and register contract clients — multiple skip sizes per booking
           </p>
         </header>
 
@@ -301,7 +412,7 @@ export default function DispatchPage() {
               </div>
               <div>
                 <h2 className="text-sm font-bold uppercase tracking-[0.14em]">Log Delivery</h2>
-                <p className={`text-xs ${s.sub}`}>Creates an invoice · marks skip as deployed</p>
+                <p className={`text-xs ${s.sub}`}>Creates an invoice · marks skips as deployed</p>
               </div>
             </div>
 
@@ -326,7 +437,7 @@ export default function DispatchPage() {
                     <span className="font-bold tabular-nums text-cyan-400">{zar.format(matchedContract.mrr)}/mo</span> covers{" "}
                     <span className="font-bold tabular-nums">{budget.covered}× {matchedContract.size}</span> at {matchedContract.site}.
                     {budget.extrasOut > 0 && <> They already have <span className="font-bold tabular-nums text-amber-400">{budget.extrasOut} extra</span> on site, billed separately.</>}{" "}
-                    This delivery takes them to <span className="font-bold tabular-nums">{budget.afterThis} skips</span> — over budget.
+                    This delivery ({invoiceSkips} skip{invoiceSkips !== 1 ? "s" : ""}) takes them to <span className="font-bold tabular-nums">{budget.afterThis} skips</span> — over budget.
                   </p>
                   <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
                     <div className={`rounded-lg px-3 py-2 text-[11px] leading-snug ${s.chip}`}>
@@ -336,8 +447,7 @@ export default function DispatchPage() {
                     <button type="button" onClick={adjustContract} disabled={adjusting}
                       className="rounded-lg border border-cyan-400/40 bg-cyan-500/[0.1] px-3 py-2 text-left text-[11px] font-medium leading-snug text-cyan-300 transition-colors hover:bg-cyan-500/[0.18]">
                       {adjusting ? <Loader2 size={12} className="mb-0.5 inline animate-spin" /> : <span className="font-bold">Option B:</span>}{" "}
-                      adjust contract instead → {budget.covered + 1}× skips @{" "}
-                      {zar.format(Math.round(matchedContract.mrr + matchedContract.mrr / matchedContract.skips))}/mo (pro-rata). No invoice.
+                      adjust contract instead → {budget.covered + invoiceSkips}× skips, pro-rata MRR uplift. No invoice.
                     </button>
                   </div>
                 </div>
@@ -348,21 +458,20 @@ export default function DispatchPage() {
                   <input required type="date" value={delivery.date}
                     onChange={(e) => setDeliveryField("date", e.target.value)} className={inputCls} />
                 </Field>
-                <Field s={s} label="Skip size" icon={Container}>
-                  <select value={delivery.size} onChange={(e) => setDeliveryField("size", e.target.value)} className={selectCls}>
-                    {SKIP_SIZES.map((x) => <option key={x.size} value={x.size}>{x.label}</option>)}
-                  </select>
+                <Field s={s} label="Hire type" icon={Gauge}>
+                  <Segmented s={s} options={HIRE_TYPES} value={delivery.hire} onChange={onHireChange} />
                 </Field>
               </div>
 
-              <Field s={s} label="Location" icon={MapPin} hint="where the skip will stand">
+              {/* ── SKIP LINE ITEMS ── */}
+              <Field s={s} label="Skips" icon={Container} hint="add as many sizes as needed">
+                <LineItems s={s} lines={invLines} setLines={setInvLines} hire={delivery.hire} priceMode="hire" />
+              </Field>
+
+              <Field s={s} label="Location" icon={MapPin} hint="where the skips will stand">
                 <input required value={delivery.location}
                   onChange={(e) => setDeliveryField("location", e.target.value)}
                   placeholder="e.g. 12 Koedoe St, Waterval East" className={inputCls} />
-              </Field>
-
-              <Field s={s} label="Hire type" icon={Gauge}>
-                <Segmented s={s} options={HIRE_TYPES} value={delivery.hire} onChange={(v) => setDeliveryField("hire", v)} />
               </Field>
 
               <Field s={s} label="Payment method" icon={CreditCard}>
@@ -382,10 +491,13 @@ export default function DispatchPage() {
                 </Field>
               </div>
 
-              <Field s={s} label="Amount (ZAR)" icon={Banknote} hint="auto-quoted, editable">
-                <input required type="number" min="0" step="50" value={delivery.amount}
-                  onChange={(e) => setDeliveryField("amount", e.target.value)} className={inputCls} />
-              </Field>
+              {/* ── INVOICE TOTAL ── */}
+              <div className={`flex items-center justify-between rounded-xl px-4 py-3 ${s.chip}`}>
+                <span className={`text-xs ${s.sub}`}>
+                  {invoiceSkips} skip{invoiceSkips !== 1 ? "s" : ""} across {invLines.length} line{invLines.length !== 1 ? "s" : ""} · {delivery.hire.toLowerCase()}
+                </span>
+                <span className="text-lg font-extrabold tabular-nums">{zar.format(invoiceAmount)}</span>
+              </div>
 
               <SubmitButton busy={submittingInvoice}
                 label={matchedContract ? "Log as contract extra" : "Dispatch & Log"}
@@ -416,31 +528,19 @@ export default function DispatchPage() {
                   onChange={(e) => setContractForm((p) => ({ ...p, site: e.target.value }))}
                   placeholder="e.g. Menlyn, Pretoria East" className={inputCls} />
               </Field>
-              <div className="grid grid-cols-2 gap-3">
-                <Field s={s} label="Skip count" icon={Hash}>
-                  <input required type="number" min="1" max="20" value={contractForm.skips}
-                    onChange={(e) => setContractForm((p) => ({ ...p, skips: e.target.value }))} className={inputCls} />
-                </Field>
-                <Field s={s} label="Skip size" icon={Container}>
-                  <select value={contractForm.size}
-                    onChange={(e) => setContractForm((p) => ({ ...p, size: e.target.value }))} className={selectCls}>
-                    {SKIP_SIZES.map((x) => <option key={x.size} value={x.size}>{x.label}</option>)}
-                  </select>
-                </Field>
-              </div>
-              <Field s={s} label="Agreed MRR (ZAR)" icon={Banknote} hint="guaranteed monthly recurring">
-                <input required type="number" min="0" step="100" value={contractForm.mrr}
-                  onChange={(e) => setContractForm((p) => ({ ...p, mrr: e.target.value }))}
-                  placeholder="e.g. 7600" className={inputCls} />
+
+              {/* ── CONTRACT LINE ITEMS ── */}
+              <Field s={s} label="Committed skips" icon={Hash} hint="monthly recurring fleet">
+                <LineItems s={s} lines={contractLines} setLines={setContractLines} hire="Monthly" priceMode="monthly" />
               </Field>
 
               <div className={`rounded-xl px-4 py-3 text-xs ${s.chip}`}>
                 <p className={`font-semibold uppercase tracking-[0.12em] ${s.faint}`}>Deal summary</p>
                 <p className={`mt-1 tabular-nums ${s.sub}`}>
-                  {contractForm.skips || 0}× {contractForm.size} permanent skip{Number(contractForm.skips) === 1 ? "" : "s"}
+                  {contractSkips} permanent skip{contractSkips === 1 ? "" : "s"}
                   {contractForm.site ? ` @ ${contractForm.site}` : ""} ·{" "}
-                  <span className="font-bold text-cyan-400">{zar.format(Number(contractForm.mrr) || 0)}/mo</span> ={" "}
-                  <span className="font-semibold">{zar.format((Number(contractForm.mrr) || 0) * 12)}/yr</span>
+                  <span className="font-bold text-cyan-400">{zar.format(contractMrr)}/mo</span> ={" "}
+                  <span className="font-semibold">{zar.format(contractMrr * 12)}/yr</span>
                 </p>
               </div>
 
