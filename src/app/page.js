@@ -1,36 +1,24 @@
 "use client";
 
 /**
- * ─────────────────────────────────────────────────────────────────────────────
- *  DASHBOARD — src/app/page.js   (or src/app/dashboard/page.js)
- *
- *  Rebuilt for: proper light/dark theming on EVERY surface (KPI cards, panels,
- *  charts), and stacked capacity bars instead of the block-matrix skip view.
- *  Reads live data from Supabase; falls back to demo data if tables are empty.
- *
- *  Owner page (middleware-gated).
- * ─────────────────────────────────────────────────────────────────────────────
+ * DASHBOARD — src/app/page.js  (the "/" route, your live dashboard)
+ * Live Supabase data. Revenue Engine chart + projection via RevenueProjection.
+ * Requires: src/components/RevenueProjection.js
  */
 
+import RevenueProjection from "@/components/RevenueProjection";
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import { useTheme } from "@/components/AppShell";
-import {
-  ResponsiveContainer, ComposedChart, Area, Bar, XAxis, YAxis,
-  CartesianGrid, Tooltip, PieChart, Pie, Cell,
-} from "recharts";
+import { ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import {
   Truck, Wallet, Clock4, AlertTriangle, ArrowUpRight, ArrowDownRight,
   Layers, CalendarDays, Radio, MapPin,
 } from "lucide-react";
 
 const zar = new Intl.NumberFormat("en-ZA", { style: "currency", currency: "ZAR", maximumFractionDigits: 0 });
-const DAY = 86_400_000;
-const STANDARD_RENTAL_DAYS = 7;
-
 const ACCENT = { mrr: "#22d3ee", adhoc: "#f59e0b", ok: "#34d399", danger: "#fb7185" };
 
-/* ── theme tokens — note the CHART-specific values that flip with mode ────── */
 const T = {
   dark: {
     page: "text-zinc-100",
@@ -40,9 +28,6 @@ const T = {
     chip: "bg-white/[0.05] border border-white/[0.08]",
     iconBox: "bg-white/[0.06] text-zinc-300",
     track: "bg-white/[0.06]",
-    grid: "rgba(255,255,255,0.06)", axis: "#71717a",
-    tooltipBg: "rgba(18,18,24,0.94)", tooltipBorder: "rgba(255,255,255,0.12)", tooltipText: "#fafafa",
-    dotEdge: "#0F0F13", glow: 5,
   },
   light: {
     page: "text-zinc-800",
@@ -52,13 +37,9 @@ const T = {
     chip: "bg-zinc-100 border border-zinc-200",
     iconBox: "bg-zinc-100 text-zinc-600",
     track: "bg-zinc-200/70",
-    grid: "rgba(0,0,0,0.07)", axis: "#a1a1aa",
-    tooltipBg: "rgba(255,255,255,0.97)", tooltipBorder: "rgba(0,0,0,0.08)", tooltipText: "#18181b",
-    dotEdge: "#FAFAF8", glow: 0,   
   },
 };
 
-/* ── fallback demo data (used only if Supabase returns nothing) ──────────── */
 const DEMO_FLEET = [
   { size: "2m³", label: "Mini", owned: 12, deployed: 9 },
   { size: "3m³", label: "Midi", owned: 14, deployed: 13 },
@@ -74,32 +55,6 @@ function parseQty(items) {
   return out;
 }
 
-/* ── custom tooltip (theme-aware) ────────────────────────────────────────── */
-function RevenueTooltip({ active, payload, label, t }) {
-  if (!active || !payload?.length) return null;
-  const c = payload.find((p) => p.dataKey === "contract")?.value ?? 0;
-  const a = payload.find((p) => p.dataKey === "adhoc")?.value ?? 0;
-  return (
-    <div className="rounded-xl px-4 py-3 text-sm backdrop-blur-md"
-      style={{ background: t.tooltipBg, border: `1px solid ${t.tooltipBorder}`, color: t.tooltipText }}>
-      <p className="mb-2 text-xs font-semibold uppercase tracking-widest opacity-60">{label} — revenue split</p>
-      <div className="flex items-center justify-between gap-8 tabular-nums">
-        <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full" style={{ background: ACCENT.mrr }} />Contract MRR</span>
-        <span className="font-semibold">{zar.format(c)}</span>
-      </div>
-      <div className="mt-1 flex items-center justify-between gap-8 tabular-nums">
-        <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full" style={{ background: ACCENT.adhoc }} />Ad-hoc invoiced</span>
-        <span className="font-semibold">{zar.format(a)}</span>
-      </div>
-      <div className="mt-2 flex items-center justify-between gap-8 border-t pt-2 tabular-nums" style={{ borderColor: t.tooltipBorder }}>
-        <span className="text-xs uppercase tracking-wider opacity-60">Total</span>
-        <span className="font-bold">{zar.format(c + a)}</span>
-      </div>
-    </div>
-  );
-}
-
-/* ── KPI card ────────────────────────────────────────────────────────────── */
 function KpiCard({ t, icon: Icon, label, value, delta, deltaUp, footnote, critical }) {
   return (
     <div className={`relative overflow-hidden rounded-2xl p-5 transition-colors ${t.panel} ${critical ? t.cardCritical : ""}`}>
@@ -129,7 +84,6 @@ function KpiCard({ t, icon: Icon, label, value, delta, deltaUp, footnote, critic
   );
 }
 
-/* ── STACKED CAPACITY BAR — replaces the block matrix ────────────────────── */
 function CapacityBar({ t, fleet }) {
   const ratio = fleet.owned > 0 ? fleet.deployed / fleet.owned : 0;
   const free = fleet.owned - fleet.deployed;
@@ -151,17 +105,11 @@ function CapacityBar({ t, fleet }) {
       </div>
       <div className={`h-2.5 w-full overflow-hidden rounded-full ${t.track}`}>
         <div className="h-full rounded-full transition-all duration-500"
-          style={{ width: `${pct}%`, background: hot
-            ? "linear-gradient(90deg,#fbbf24,#ea580c)"
-            : "linear-gradient(90deg,#22d3ee,#0891b2)" }} />
+          style={{ width: `${pct}%`, background: hot ? "linear-gradient(90deg,#fbbf24,#ea580c)" : "linear-gradient(90deg,#22d3ee,#0891b2)" }} />
       </div>
     </div>
   );
 }
-
-/* ════════════════════════════════════════════════════════════════════════════
-   PAGE
-   ════════════════════════════════════════════════════════════════════════════ */
 
 export default function Dashboard() {
   const { dark } = useTheme();
@@ -186,15 +134,13 @@ export default function Dashboard() {
 
   const ops = useMemo(() => {
     const inv = invoices ?? [];
-    /* fleet: owned from skip_fleet, deployed derived from uncollected invoices */
     const deployedBySize = {};
     for (const r of inv.filter((x) => !x.collected))
       for (const { size, qty } of parseQty(r.items))
         deployedBySize[size] = (deployedBySize[size] ?? 0) + qty;
 
     const fleet = (skipFleet.length ? skipFleet : DEMO_FLEET).map((f) => ({
-      size: f.size, label: f.label,
-      owned: f.owned,
+      size: f.size, label: f.label, owned: f.owned,
       deployed: Math.min(f.deployed ?? deployedBySize[f.size] ?? 0, f.owned),
     }));
 
@@ -203,21 +149,17 @@ export default function Dashboard() {
     const utilization = (totalDeployed / totalOwned) * 100;
 
     const mrr = contracts.reduce((s, c) => s + Number(c.mrr || 0), 0);
-    const thisMonth = new Date().getMonth();
-    const adhocMTD = inv.filter((i) => new Date(i.date).getMonth() === thisMonth).reduce((s, i) => s + Number(i.amount || 0), 0);
+
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const adhocMTD = inv
+      .filter((i) => i.date && new Date(i.date) >= startOfMonth)
+      .reduce((s, i) => s + Number(i.amount || 0), 0);
 
     const debtors = inv.filter((i) => !i.banked);
     const outstanding = debtors.reduce((s, i) => s + Number(i.amount || 0), 0);
 
-    /* weekly revenue series for the chart */
-    const weeklyMRR = Math.round(mrr / 4.33);
-    const pattern = [0.62, 1.18, 0.84, 1.31, 0.71, 1.05, 1.42, 0.97];
-    const meanAdhoc = inv.length ? inv.reduce((s, i) => s + Number(i.amount || 0), 0) / 4 : 8000;
-    const series = pattern.map((k, i) => ({
-      week: `W${i + 1}`, contract: weeklyMRR || 10000, adhoc: Math.round((meanAdhoc * k) / 50) * 50,
-    }));
-
-    return { fleet, totalOwned, totalDeployed, utilization, mrr, adhocMTD, totalRevenue: mrr + adhocMTD, outstanding, debtors, series };
+    return { fleet, totalOwned, totalDeployed, utilization, mrr, adhocMTD, totalRevenue: mrr + adhocMTD, outstanding, debtors };
   }, [invoices, contracts, skipFleet]);
 
   const critical = ops.utilization > 85;
@@ -229,7 +171,6 @@ export default function Dashboard() {
   return (
     <div className={`px-4 py-6 sm:px-8 ${t.page}`} style={{ fontFeatureSettings: '"tnum" 1' }}>
       <div className="mx-auto max-w-[1440px]">
-        {/* header */}
         <header className="mb-7 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3.5">
             <div>
@@ -246,57 +187,30 @@ export default function Dashboard() {
         </header>
 
         <div className="grid grid-cols-12 gap-4">
-          {/* KPIs */}
           <div className="col-span-12 md:col-span-4">
-            <KpiCard t={t} icon={Truck} label="Active Fleet Utilization" value={`${ops.utilization.toFixed(1)}%`} critical={critical} delta="+4.2 pts" deltaUp footnote="vs last week" />
+            <KpiCard t={t} icon={Truck} label="Active Fleet Utilization" value={`${ops.utilization.toFixed(1)}%`} critical={critical} delta="live" deltaUp footnote="on-site / owned" />
           </div>
           <div className="col-span-12 md:col-span-4">
-            <KpiCard t={t} icon={Wallet} label="Total Revenue · MRR + Ad-hoc" value={zar.format(ops.totalRevenue)} delta="+11.8%" deltaUp footnote={`${zar.format(ops.mrr)} contracted base-load`} />
+            <KpiCard t={t} icon={Wallet} label="Total Revenue · MRR + Ad-hoc" value={zar.format(ops.totalRevenue)} delta="MTD" deltaUp footnote={`${zar.format(ops.mrr)} contracted base-load`} />
           </div>
           <div className="col-span-12 md:col-span-4">
             <KpiCard t={t} icon={Clock4} label="Outstanding Debtors" value={zar.format(ops.outstanding)} delta={`${ops.debtors.length} invoices`} deltaUp={false} footnote="uncollected / unbanked" />
           </div>
 
-          {/* revenue engine */}
           <section className={`col-span-12 rounded-2xl p-5 lg:col-span-8 ${t.panel}`}>
             <div className="mb-1 flex flex-wrap items-start justify-between gap-2">
               <div>
                 <h2 className="text-sm font-bold uppercase tracking-[0.14em]">Revenue Engine</h2>
-                <p className={`text-xs ${t.sub}`}>Predictable contract base-load vs stochastic ad-hoc hire · weekly, ZAR</p>
+                <p className={`text-xs ${t.sub}`}>Predictable contract base-load vs stochastic ad-hoc hire · monthly, ZAR</p>
               </div>
               <div className={`flex items-center gap-4 rounded-lg px-3 py-1.5 text-xs ${t.chip}`}>
                 <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm" style={{ background: ACCENT.mrr }} />Contract MRR</span>
                 <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm" style={{ background: ACCENT.adhoc }} />Ad-hoc invoiced</span>
               </div>
             </div>
-            <div className="h-[340px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={ops.series} margin={{ top: 18, right: 8, left: 8, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="gAdhoc" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={ACCENT.adhoc} stopOpacity={dark ? 0.5 : 0.32} />
-                      <stop offset="100%" stopColor={ACCENT.adhoc} stopOpacity={0.02} />
-                    </linearGradient>
-                    <linearGradient id="gMrr" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={ACCENT.mrr} stopOpacity={dark ? 0.9 : 0.85} />
-                      <stop offset="100%" stopColor={ACCENT.mrr} stopOpacity={dark ? 0.25 : 0.4} />
-                    </linearGradient>
-                    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
-                      <feGaussianBlur stdDeviation={t.glow} result="b" />
-                      <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
-                    </filter>
-                  </defs>
-                  <CartesianGrid stroke={t.grid} vertical={false} />
-                  <XAxis dataKey="week" stroke={t.axis} tickLine={false} axisLine={false} tick={{ fontSize: 12 }} dy={6} />
-                  <YAxis stroke={t.axis} tickLine={false} axisLine={false} tick={{ fontSize: 12 }} tickFormatter={(v) => `R${(v / 1000).toFixed(0)}k`} width={52} />
-                  <Tooltip cursor={{ fill: dark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.03)" }} content={<RevenueTooltip t={t} />} />
-                  <Bar dataKey="contract" name="Contract MRR" fill="url(#gMrr)" radius={[6, 6, 0, 0]} barSize={34} />
-                  <Area type="monotone" dataKey="adhoc" name="Ad-hoc invoiced" stroke={ACCENT.adhoc} strokeWidth={2.5} fill="url(#gAdhoc)" filter="url(#glow)"
-                    dot={{ r: 3, fill: ACCENT.adhoc, strokeWidth: 0 }} activeDot={{ r: 5, fill: ACCENT.adhoc, stroke: t.dotEdge, strokeWidth: 2 }} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-            {/* contract strip */}
+
+            <RevenueProjection />
+
             <div className={`mt-2 grid grid-cols-1 gap-2 border-t pt-4 sm:grid-cols-3 lg:grid-cols-5 ${t.hairline}`}>
               {contracts.slice(0, 5).map((c, i) => (
                 <div key={i} className={`rounded-xl px-3 py-2.5 ${t.chip}`}>
@@ -308,7 +222,6 @@ export default function Dashboard() {
             </div>
           </section>
 
-          {/* asset matrix → capacity bars */}
           <section className={`col-span-12 rounded-2xl p-5 lg:col-span-4 ${t.panel}`}>
             <div className="mb-3 flex items-start justify-between">
               <div>
@@ -318,17 +231,16 @@ export default function Dashboard() {
               <Layers size={18} className={t.faint} />
             </div>
 
-            {/* overall donut */}
             <div className="relative mx-auto h-[150px] w-[150px]">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <defs>
-                    <linearGradient id="gDonut" x1="0" y1="0" x2="1" y2="1">
+                    <linearGradient id="gDonutDash" x1="0" y1="0" x2="1" y2="1">
                       <stop offset="0%" stopColor="#fbbf24" /><stop offset="100%" stopColor="#ea580c" />
                     </linearGradient>
                   </defs>
                   <Pie data={donut} dataKey="value" innerRadius={52} outerRadius={70} startAngle={90} endAngle={-270} paddingAngle={3} stroke="none">
-                    <Cell fill="url(#gDonut)" />
+                    <Cell fill="url(#gDonutDash)" />
                     <Cell fill={dark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)"} />
                   </Pie>
                 </PieChart>
@@ -341,7 +253,6 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* per-size capacity bars */}
             <div className={`mt-3 divide-y ${dark ? "divide-white/[0.06]" : "divide-zinc-100"}`}>
               {ops.fleet.map((f) => <CapacityBar key={f.size} t={t} fleet={f} />)}
             </div>
