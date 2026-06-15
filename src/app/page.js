@@ -54,7 +54,7 @@ const T = {
     track: "bg-zinc-200/70",
     grid: "rgba(0,0,0,0.07)", axis: "#a1a1aa",
     tooltipBg: "rgba(255,255,255,0.97)", tooltipBorder: "rgba(0,0,0,0.08)", tooltipText: "#18181b",
-    dotEdge: "#FAFAF8", glow: 0,   // no glow in light mode — it muddies on white
+    dotEdge: "#FAFAF8", glow: 0,   
   },
 };
 
