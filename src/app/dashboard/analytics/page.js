@@ -93,12 +93,18 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     const fetchAll = async () => {
+      // 1. Generate a timestamp that changes every millisecond
+      const cacheBuster = new Date().getTime().toString(); 
+
       const [inv, ctr, sf] = await Promise.all([
         supabase
           .from("invoices")
           .select("id, client, date, items, amount")
-          .eq("voided", true) // This will now work perfectly for ALL historical data
+          .neq("voided", true) 
           .order("date")
+          // 2. Add this dummy filter. Because 'cacheBuster' is always unique, 
+          // Vercel's Edge CDN is forced to fetch fresh data every single time.
+          .neq("client", cacheBuster) 
           .range(0, 49999),
         supabase.from("contracts").select("client, mrr"),
         supabase.from("skip_fleet").select("size, owned, deployed").order("size"),

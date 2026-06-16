@@ -288,12 +288,11 @@ export default function InvoicesPage() {
   }
 
   // Soft delete implementation
-  async function voidInvoice(row) {
+async function voidInvoice(row) {
     if (!confirm(`Delete invoice ${row.id} for ${row.client}?\n\nThis will remove it from your active view and unbanked totals, but keep it securely on record for audit purposes (Soft Delete).`)) return;
     
     setBusyId(row.id + "void");
     
-    // Perform the soft delete in Supabase
     const { error } = await supabase
       .from("invoices")
       .update({ voided: true })
@@ -305,7 +304,9 @@ export default function InvoicesPage() {
       return setToast({ type: "error", msg: `Delete failed: ${error.message}` });
     }
     
-    // Remove it from the active UI list immediately
+    // TELL NEXT.JS TO DUMP ITS INTERNAL CACHE:
+    router.refresh(); 
+    
     setRows((prev) => prev.filter((r) => r.id !== row.id));
     setToast({ type: "success", msg: `${row.id} deleted (voided) and removed from active view` });
   }
