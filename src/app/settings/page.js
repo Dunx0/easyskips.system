@@ -3,7 +3,7 @@
 /**
  * SETTINGS — src/app/settings/page.js
  * Rate card · skip inventory · vehicles · drivers · zones · company/tax details.
- * Fix: addSkipSize and removeSkipSize now sync across both skip_fleet and rates tables.
+ * Fix: Syncs Skip Inventory to Rate Card UI directly, prompting a clean save.
  */
 
 import { useState, useEffect, useCallback } from "react";
@@ -161,12 +161,13 @@ export default function SettingsPage() {
     setRates((p) => p.map((r) => r.size === size ? { ...r, [field]: Number(val) || 0 } : r));
     setDirty((p) => ({ ...p, rates: true }));
   };
+  
   const editFleet = (size, val) => {
     setSkipFleet((p) => p.map((f) => f.size === size ? { ...f, owned: Math.max(0, Number(val) || 0) } : f));
     setDirty((p) => ({ ...p, fleet: true }));
   };
 
-  // UPDATED: Syncs to both skip_fleet and rates
+  // THE FIX: Syncs immediately to UI and forces the user to save the Rate Card.
   async function addSkipSize() {
     const size = newSkip.size.trim(); const label = newSkip.label.trim();
     if (!size) return setToast({ type: "error", msg: "Enter a size, e.g. 12m³" });
@@ -177,38 +178,36 @@ export default function SettingsPage() {
     const { data: fleetData, error: fleetError } = await supabase.from("skip_fleet").insert(fleetRow).select().single();
     if (fleetError) return setToast({ type: "error", msg: `Inventory Error: ${fleetError.message}` });
     
-    // 2. Insert into rates table (setting defaults to 0)
-    const rateRow = { size: fleetData.size, label: fleetData.label, daily: 0, weekly: 0, monthly: 0 };
-    const { data: rateData, error: rateError } = await supabase.from("rates").insert(rateRow).select().single();
-    if (rateError) return setToast({ type: "error", msg: `Rate Error: ${rateError.message}` });
-
-    // 3. Update UI states perfectly synced
+    // 2. Add to Skip Fleet UI
     setSkipFleet((p) => [...p, fleetData].sort((a, b) => a.size.localeCompare(b.size, undefined, { numeric: true })));
-    setRates((p) => [...p, rateData].sort((a, b) => a.size.localeCompare(b.size, undefined, { numeric: true })));
+    
+    // 3. Add to Rates UI (with zeroes) and trigger the Dirty state to light up the Save button
+    const rateTemplate = { size: fleetData.size, label: fleetData.label, daily: 0, weekly: 0, monthly: 0 };
+    setRates((p) => [...p, rateTemplate].sort((a, b) => a.size.localeCompare(b.size, undefined, { numeric: true })));
+    setDirty((p) => ({ ...p, rates: true })); // This lights up the Rate Card "Save changes" button
     
     setNewSkip({ size: "", label: "", owned: "" });
-    setToast({ type: "success", msg: `${size} added to Inventory and Rate Card` });
+    setToast({ type: "success", msg: `${size} added! Please set its prices in the Rate Card and click Save.` });
   }
 
-  // UPDATED: Deletes from both skip_fleet and rates
   async function removeSkipSize(f) {
     if (!confirm(`Remove the ${f.size} (${f.label}) size?\n\nExisting invoices keep their data, but this size will be permanently removed from your Rate Card and Inventory.`)) return;
     setBusyRow(f.size);
     
-    // 1. Wipe from Rates
+    // Attempt to wipe from Rates first
     await supabase.from("rates").delete().eq("size", f.size);
     
-    // 2. Wipe from Skip Fleet
+    // Wipe from Skip Fleet
     const { error: fleetError } = await supabase.from("skip_fleet").delete().eq("size", f.size);
     
     setBusyRow(null);
     if (fleetError) return setToast({ type: "error", msg: fleetError.message });
     
-    // 3. Update UI states perfectly synced
+    // Update UI states perfectly synced
     setSkipFleet((p) => p.filter((x) => x.size !== f.size));
     setRates((p) => p.filter((r) => r.size !== f.size));
     
-    setToast({ type: "success", msg: `${f.size} removed from both tables` });
+    setToast({ type: "success", msg: `${f.size} removed completely.` });
   }
 
   const editZone = (id, field, val) => {
