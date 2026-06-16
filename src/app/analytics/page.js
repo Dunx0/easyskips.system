@@ -1,18 +1,10 @@
 "use client";
 
 /**
- * ─────────────────────────────────────────────────────────────────────────────
- *  ANALYTICS — apps/console/src/app/analytics/page.js   (OWNER app)
- *
- *  Quantitative decision support, computed live from the invoice ledger:
- *   1. Revenue forecast — exponential smoothing on monthly ad-hoc revenue,
- *      with a ±95% prediction interval band (honest uncertainty, not a line)
- *   2. Demand mix — which skip sizes the market is actually asking for
- *   3. Capex ranking — which size to buy next (utilization × demand share)
- *   4. Client concentration — top-client dependence + HHI index
- *
- *  Add to AppShell NAV (console app): { href: "/analytics", label: "Analytics", icon: BarChart3 }
- * ─────────────────────────────────────────────────────────────────────────────
+ * ANALYTICS — src/app/analytics/page.js  (OWNER)
+ * Live from the invoice ledger: revenue forecast (exp. smoothing + 95% PI),
+ * demand mix, capex ranking, client concentration.
+ * Fixes: lifts Supabase 1000-row cap (.range), realtime refresh, live skip_fleet.
  */
 
 import { useState, useEffect, useMemo } from "react";
@@ -26,8 +18,8 @@ import {
   BarChart3, TrendingUp, Container, Users, Loader2, AlertTriangle, Sigma,
 } from "lucide-react";
 
-/* ── fleet constants (sync with dashboard until a fleet table exists) ───── */
-const FLEET = [
+/* fallback fleet — used only if the skip_fleet table is empty */
+const DEMO_FLEET = [
   { size: "2m³", owned: 12, deployed: 9 },
   { size: "3m³", owned: 14, deployed: 13 },
   { size: "6m³", owned: 22, deployed: 20 },
@@ -53,11 +45,6 @@ const T = {
   },
 };
 
-/* ════════════════════════════════════════════════════════════════════════════
-   STATS HELPERS
-   ════════════════════════════════════════════════════════════════════════════ */
-
-/** "2× 6m³ Skip — Waterval East" → [{size:"6m³", qty:2}] */
 function parseItems(items) {
   if (!items) return [];
   const out = [];
@@ -71,11 +58,10 @@ function parseItems(items) {
   return out;
 }
 
-const monthKey = (d) => d.slice(0, 7); // "2026-06"
+const monthKey = (d) => d.slice(0, 7);
 const monthLabel = (key) =>
   new Date(key + "-01").toLocaleDateString("en-ZA", { month: "short", year: "2-digit" });
 
-/** Simple exponential smoothing forecast + 95% PI from one-step residuals */
 function sesForecast(series, alpha = 0.5, horizon = 2) {
   if (series.length < 3) return { fitted: [], forecasts: [], sigma: 0 };
   let level = series[0];
@@ -97,47 +83,54 @@ function nextMonthKey(key, plus = 1) {
   return d.toISOString().slice(0, 7);
 }
 
-/* ════════════════════════════════════════════════════════════════════════════
-   PAGE
-   ════════════════════════════════════════════════════════════════════════════ */
-
 export default function AnalyticsPage() {
   const { dark } = useTheme();
   const s = T[dark ? "dark" : "light"];
 
-  const [invoices, setInvoices] = useState(null); // null = loading
+  const [invoices, setInvoices] = useState(null);
   const [contracts, setContracts] = useState([]);
+  const [fleet, setFleet] = useState(DEMO_FLEET);
 
   useEffect(() => {
-    (async () => {
-      const [inv, ctr] = await Promise.all([
-        supabase.from("invoices").select("id, client, date, items, amount").order("date"),
+    const fetchAll = async () => {
+      const [inv, ctr, sf] = await Promise.all([
+        supabase.from("invoices").select("id, client, date, items, amount").order("date").range(0, 49999),
         supabase.from("contracts").select("client, mrr"),
+        supabase.from("skip_fleet").select("size, owned, deployed").order("size"),
       ]);
       setInvoices(inv.data ?? []);
       setContracts(ctr.data ?? []);
-    })();
+      if (sf.data && sf.data.length) setFleet(sf.data);
+    };
+    fetchAll();
+
+    const channel = supabase
+      .channel("analytics-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "invoices" }, fetchAll)
+      .on("postgres_changes", { event: "*", schema: "public", table: "contracts" }, fetchAll)
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, []);
 
   const model = useMemo(() => {
     if (!invoices || invoices.length === 0) return null;
 
-    /* ── monthly revenue + forecast ───────────────────────────────────── */
+    /* monthly revenue + forecast */
     const byMonth = new Map();
     for (const r of invoices) {
+      if (!r.date) continue;
       const k = monthKey(r.date);
       byMonth.set(k, (byMonth.get(k) ?? 0) + Number(r.amount || 0));
     }
     const months = [...byMonth.keys()].sort();
     const values = months.map((k) => byMonth.get(k));
-    const mrr = contracts.reduce((s, c) => s + Number(c.mrr || 0), 0);
+    const mrr = contracts.reduce((sum, c) => sum + Number(c.mrr || 0), 0);
 
     const { forecasts, sigma } = sesForecast(values);
     const chart = months.map((k, i) => ({
       m: monthLabel(k), actual: Math.round(values[i]), forecast: null, pi: null,
     }));
-    let lastKey = months[months.length - 1];
-    // bridge point so the dashed forecast connects to the last actual
+    const lastKey = months[months.length - 1];
     if (chart.length && forecasts.length) {
       chart[chart.length - 1].forecast = chart[chart.length - 1].actual;
       chart[chart.length - 1].pi = [chart[chart.length - 1].actual, chart[chart.length - 1].actual];
@@ -152,10 +145,11 @@ export default function AnalyticsPage() {
       });
     });
 
-    /* ── demand mix by size per month ─────────────────────────────────── */
-    const mixMap = new Map(); // month → {2m³: qty, ...}
+    /* demand mix by size per month */
+    const mixMap = new Map();
     const totalQty = { "2m³": 0, "3m³": 0, "6m³": 0, "9m³": 0 };
     for (const r of invoices) {
+      if (!r.date) continue;
       const k = monthKey(r.date);
       if (!mixMap.has(k)) mixMap.set(k, { m: monthLabel(k) });
       for (const { size, qty } of parseItems(r.items)) {
@@ -166,14 +160,16 @@ export default function AnalyticsPage() {
     const mix = [...mixMap.keys()].sort().map((k) => mixMap.get(k));
     const grandQty = Object.values(totalQty).reduce((a, b) => a + b, 0) || 1;
 
-    /* ── capex ranking: utilization × demand share ────────────────────── */
-    const capex = FLEET.map((f) => {
-      const util = f.deployed / f.owned;
-      const share = totalQty[f.size] / grandQty;
-      return { ...f, util, share, score: util * share };
+    /* capex ranking: utilization × demand share (live fleet) */
+    const capex = fleet.map((f) => {
+      const owned = Number(f.owned || 0) || 1;
+      const deployed = Number(f.deployed || 0);
+      const util = deployed / owned;
+      const share = (totalQty[f.size] ?? 0) / grandQty;
+      return { size: f.size, owned, deployed, util, share, score: util * share };
     }).sort((a, b) => b.score - a.score);
 
-    /* ── client concentration ─────────────────────────────────────────── */
+    /* client concentration */
     const byClient = new Map();
     for (const r of invoices) {
       const name = (r.client || "Unknown").trim();
@@ -190,9 +186,8 @@ export default function AnalyticsPage() {
       chart, sigma, mrr, mix, capex, clients: clients.slice(0, 6), top5Share, hhi,
       nMonths: months.length, nInvoices: invoices.length,
     };
-  }, [invoices, contracts]);
+  }, [invoices, contracts, fleet]);
 
-  /* ── states ──────────────────────────────────────────────────────────── */
   if (invoices === null) {
     return (
       <div className="grid min-h-[60vh] place-items-center">
@@ -234,7 +229,7 @@ export default function AnalyticsPage() {
         </header>
 
         <div className="grid grid-cols-12 gap-4">
-          {/* ── 1 · REVENUE FORECAST ───────────────────────────────────── */}
+          {/* 1 · REVENUE FORECAST */}
           <section className={`col-span-12 rounded-2xl p-5 lg:col-span-8 ${s.panel}`}>
             <div className="mb-1 flex items-start justify-between">
               <div>
@@ -263,7 +258,6 @@ export default function AnalyticsPage() {
                   <Tooltip contentStyle={tooltipStyle} formatter={(v, name) =>
                     Array.isArray(v) ? [`${zar.format(v[0])} – ${zar.format(v[1])}`, "95% PI"] : [zar.format(v), name]
                   } />
-                  {/* PI band (range area) */}
                   <Area dataKey="pi" name="95% PI" stroke="none" fill="#f59e0b" fillOpacity={0.12} connectNulls />
                   <Area type="monotone" dataKey="actual" name="Actual" stroke="#f59e0b" strokeWidth={2.5}
                     fill="url(#gActual)" dot={{ r: 3, fill: "#f59e0b", strokeWidth: 0 }} connectNulls={false} />
@@ -279,7 +273,7 @@ export default function AnalyticsPage() {
             </p>
           </section>
 
-          {/* ── 2 · CAPEX RANKING ──────────────────────────────────────── */}
+          {/* 2 · CAPEX RANKING */}
           <section className={`col-span-12 rounded-2xl p-5 lg:col-span-4 ${s.panel}`}>
             <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-[0.14em]">
               <Container size={15} className="text-amber-400" /> Buy next
@@ -320,7 +314,7 @@ export default function AnalyticsPage() {
             </p>
           </section>
 
-          {/* ── 3 · DEMAND MIX ─────────────────────────────────────────── */}
+          {/* 3 · DEMAND MIX */}
           <section className={`col-span-12 rounded-2xl p-5 lg:col-span-7 ${s.panel}`}>
             <h2 className="text-sm font-bold uppercase tracking-[0.14em]">Demand mix by skip size</h2>
             <p className={`mb-2 text-xs ${s.sub}`}>Skips hired per month, parsed from invoice line items</p>
@@ -340,7 +334,7 @@ export default function AnalyticsPage() {
             </div>
           </section>
 
-          {/* ── 4 · CLIENT CONCENTRATION ───────────────────────────────── */}
+          {/* 4 · CLIENT CONCENTRATION */}
           <section className={`col-span-12 rounded-2xl p-5 lg:col-span-5 ${s.panel}`}>
             <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-[0.14em]">
               <Users size={15} className="text-amber-400" /> Client concentration
