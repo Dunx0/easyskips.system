@@ -94,7 +94,13 @@ export default function AnalyticsPage() {
   useEffect(() => {
     const fetchAll = async () => {
       const [inv, ctr, sf] = await Promise.all([
-        supabase.from("invoices").select("id, client, date, items, amount").eq("voided", false).order("date").range(0, 49999),
+        supabase
+          .from("invoices")
+          .select("id, client, date, items, amount")
+          // FIX: explicitly allow both 'false' and 'null' to catch historical data
+          .or("voided.eq.false,voided.is.null") 
+          .order("date")
+          .range(0, 49999),
         supabase.from("contracts").select("client, mrr"),
         supabase.from("skip_fleet").select("size, owned, deployed").order("size"),
       ]);
