@@ -3,9 +3,8 @@
 /**
  * INVOICES — src/app/invoices/page.js  (final)
  * · Edit modal uses a line-item builder (size+qty+price), parsed from items; amount auto-sums.
- * · Delete = Soft delete (voided=true): hidden here, recoverable, excluded from analytics.
+ * · Hard Delete: Permanently wipes the invoice and line items from the database.
  * · Print routes to /invoices/[id] — the SARS-compliant, VAT-aware document.
- * Requires: alter table invoices add column if not exists voided boolean default false;
  */
 
 import { useState, useEffect, useMemo, useCallback } from "react";
@@ -14,7 +13,7 @@ import { supabase } from "@/lib/supabase";
 import { useTheme } from "@/components/AppShell";
 import {
   Receipt, Search, Loader2, CheckCircle2, XCircle, Printer, RefreshCw,
-  Pencil, X, MapPin, Save, Plus, Trash2, Ban,
+  Pencil, X, MapPin, Save, Plus, Trash2
 } from "lucide-react";
 
 const HIRE_TYPES = ["Daily", "Weekly", "Monthly"];
@@ -255,20 +254,21 @@ export default function InvoicesPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    // Notice the void filter is completely gone now. We fetch everything that exists.
     const { data, error } = await supabase
       .from("invoices")
       .select("*")
-      .eq("voided", false)
-      // Ordered by date, then by ID to ensure sequential invoices on the same day remain in perfect order
       .order("date", { ascending: false })
-      .order("id", { ascending: false })
+      .order("id", { ascending: false }) 
       .limit(500);
+      
     if (error) setToast({ type: "error", msg: error.message });
     setRows(data ?? []);
     setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  
   useEffect(() => {
     if (!toast) return;
     const id = setTimeout(() => setToast(null), 4000);
@@ -287,29 +287,38 @@ export default function InvoicesPage() {
     setBusyId(null);
   }
 
-  // Soft delete implementation
-async function deleteInvoice(row) {
-    if (!confirm(`PERMANENTLY delete invoice ${row.id} for ${row.client}?\n\nThis action cannot be undone and will permanently remove it from your analytics.`)) return;
+  // The Hard Delete Function
+  async function deleteInvoice(row) {
+    console.log("Delete triggered for:", row.id); // For debugging
+    
+    // Explicitly use window.confirm to bypass Next.js server-side blocking
+    if (!window.confirm(`PERMANENTLY delete invoice ${row.id} for ${row.client}?\n\nThis action cannot be undone.`)) {
+      return;
+    }
     
     setBusyId(row.id + "delete");
     
-    // 1. Delete associated line items first to prevent Foreign Key constraint errors
+    // 1. Wipe line items first to prevent constraint blocks
     try {
       await supabase.from("invoice_line_items").delete().eq("invoice_id", row.id);
-    } catch { /* Ignore if table doesn't exist */ }
+    } catch (e) { console.log("Line items skip:", e); }
 
-    // 2. Hard delete the invoice
+    // 2. Wipe the invoice
     const { error } = await supabase.from("invoices").delete().eq("id", row.id);
     
     setBusyId(null);
     
     if (error) {
-      return setToast({ type: "error", msg: `Delete failed: ${error.message}` });
+      console.error("Supabase delete error:", error);
+      return setToast({ type: "error", msg: `Delete failed: Check RLS policies (${error.message})` });
     }
     
-    // Remove from the UI
+    // 3. Remove from UI immediately
     setRows((prev) => prev.filter((r) => r.id !== row.id));
     setToast({ type: "success", msg: `${row.id} permanently deleted` });
+    
+    // 4. Force Next.js to dump cache
+    router.refresh();
   }
 
   const visible = useMemo(() => {
@@ -396,11 +405,16 @@ async function deleteInvoice(row) {
                           <button onClick={() => setEditing(r)} title="Edit invoice" className={`rounded-lg p-2 transition-colors ${s.button}`}><Pencil size={14} /></button>
                           <button onClick={() => router.push(`/invoices/${r.id}`)} title="View / print (VAT-compliant)" className={`rounded-lg p-2 transition-colors ${s.button}`}><Printer size={14} /></button>
                           
-                          {/* Soft delete action using the Trash icon to match standard user expectations */}
-                          <button onClick={() => voidInvoice(r)} disabled={busyId === r.id + "void"} title="Delete invoice (Soft Delete)"
-                            className="rounded-lg p-2 text-rose-400 transition-colors hover:bg-rose-500/10 disabled:opacity-40">
-                            {busyId === r.id + "void" ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                          {/* The Hard Delete Button */}
+                          <button 
+                            onClick={() => deleteInvoice(r)} 
+                            disabled={busyId === r.id + "delete"} 
+                            title="Delete invoice permanently"
+                            className="rounded-lg p-2 text-rose-400 transition-colors hover:bg-rose-500/10 disabled:opacity-40"
+                          >
+                            {busyId === r.id + "delete" ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                           </button>
+
                         </div>
                       </td>
                     </tr>
