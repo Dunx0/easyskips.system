@@ -3,6 +3,7 @@
 /**
  * SETTINGS — src/app/settings/page.js
  * Rate card · skip inventory · vehicles · drivers · zones · company/tax details.
+ * Fix: addSkipSize and removeSkipSize now sync across both skip_fleet and rates tables.
  */
 
 import { useState, useEffect, useCallback } from "react";
@@ -165,26 +166,49 @@ export default function SettingsPage() {
     setDirty((p) => ({ ...p, fleet: true }));
   };
 
+  // UPDATED: Syncs to both skip_fleet and rates
   async function addSkipSize() {
     const size = newSkip.size.trim(); const label = newSkip.label.trim();
     if (!size) return setToast({ type: "error", msg: "Enter a size, e.g. 12m³" });
     if (skipFleet.some((f) => f.size === size)) return setToast({ type: "error", msg: `${size} already exists` });
-    const row = { size, label: label || size, owned: Math.max(0, Number(newSkip.owned) || 0) };
-    const { data, error } = await supabase.from("skip_fleet").insert(row).select().single();
-    if (error) return setToast({ type: "error", msg: error.message });
-    setSkipFleet((p) => [...p, data].sort((a, b) => a.size.localeCompare(b.size, undefined, { numeric: true })));
+    
+    // 1. Insert into skip_fleet table
+    const fleetRow = { size, label: label || size, owned: Math.max(0, Number(newSkip.owned) || 0) };
+    const { data: fleetData, error: fleetError } = await supabase.from("skip_fleet").insert(fleetRow).select().single();
+    if (fleetError) return setToast({ type: "error", msg: `Inventory Error: ${fleetError.message}` });
+    
+    // 2. Insert into rates table (setting defaults to 0)
+    const rateRow = { size: fleetData.size, label: fleetData.label, daily: 0, weekly: 0, monthly: 0 };
+    const { data: rateData, error: rateError } = await supabase.from("rates").insert(rateRow).select().single();
+    if (rateError) return setToast({ type: "error", msg: `Rate Error: ${rateError.message}` });
+
+    // 3. Update UI states perfectly synced
+    setSkipFleet((p) => [...p, fleetData].sort((a, b) => a.size.localeCompare(b.size, undefined, { numeric: true })));
+    setRates((p) => [...p, rateData].sort((a, b) => a.size.localeCompare(b.size, undefined, { numeric: true })));
+    
     setNewSkip({ size: "", label: "", owned: "" });
-    setToast({ type: "success", msg: `${size} skip size added` });
+    setToast({ type: "success", msg: `${size} added to Inventory and Rate Card` });
   }
 
+  // UPDATED: Deletes from both skip_fleet and rates
   async function removeSkipSize(f) {
-    if (!confirm(`Remove the ${f.size} (${f.label}) size?\n\nExisting invoices keep their data, but this size will no longer be selectable for new dispatches or quotes.`)) return;
+    if (!confirm(`Remove the ${f.size} (${f.label}) size?\n\nExisting invoices keep their data, but this size will be permanently removed from your Rate Card and Inventory.`)) return;
     setBusyRow(f.size);
-    const { error } = await supabase.from("skip_fleet").delete().eq("size", f.size);
+    
+    // 1. Wipe from Rates
+    await supabase.from("rates").delete().eq("size", f.size);
+    
+    // 2. Wipe from Skip Fleet
+    const { error: fleetError } = await supabase.from("skip_fleet").delete().eq("size", f.size);
+    
     setBusyRow(null);
-    if (error) return setToast({ type: "error", msg: error.message });
+    if (fleetError) return setToast({ type: "error", msg: fleetError.message });
+    
+    // 3. Update UI states perfectly synced
     setSkipFleet((p) => p.filter((x) => x.size !== f.size));
-    setToast({ type: "success", msg: `${f.size} removed` });
+    setRates((p) => p.filter((r) => r.size !== f.size));
+    
+    setToast({ type: "success", msg: `${f.size} removed from both tables` });
   }
 
   const editZone = (id, field, val) => {
