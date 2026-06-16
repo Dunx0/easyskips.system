@@ -3,7 +3,7 @@
 /**
  * INVOICES — src/app/invoices/page.js  (final)
  * · Edit modal uses a line-item builder (size+qty+price), parsed from items; amount auto-sums.
- * · Void = soft delete (voided=true): hidden here, recoverable, excluded from analytics.
+ * · Delete = Soft delete (voided=true): hidden here, recoverable, excluded from analytics.
  * · Print routes to /invoices/[id] — the SARS-compliant, VAT-aware document.
  * Requires: alter table invoices add column if not exists voided boolean default false;
  */
@@ -256,7 +256,13 @@ export default function InvoicesPage() {
   const load = useCallback(async () => {
     setLoading(true);
     const { data, error } = await supabase
-      .from("invoices").select("*").eq("voided", false).order("date", { ascending: false }).limit(500);
+      .from("invoices")
+      .select("*")
+      .eq("voided", false)
+      // Ordered by date, then by ID to ensure sequential invoices on the same day remain in perfect order
+      .order("date", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(500);
     if (error) setToast({ type: "error", msg: error.message });
     setRows(data ?? []);
     setLoading(false);
@@ -281,14 +287,27 @@ export default function InvoicesPage() {
     setBusyId(null);
   }
 
+  // Soft delete implementation
   async function voidInvoice(row) {
-    if (!confirm(`Void invoice ${row.id} for ${row.client}?\n\nHidden from this list and excluded from analytics/revenue — but kept on record (recoverable). NOT permanently deleted.`)) return;
+    if (!confirm(`Delete invoice ${row.id} for ${row.client}?\n\nThis will remove it from your active view and unbanked totals, but keep it securely on record for audit purposes (Soft Delete).`)) return;
+    
     setBusyId(row.id + "void");
-    const { error } = await supabase.from("invoices").update({ voided: true }).eq("id", row.id);
+    
+    // Perform the soft delete in Supabase
+    const { error } = await supabase
+      .from("invoices")
+      .update({ voided: true })
+      .eq("id", row.id);
+      
     setBusyId(null);
-    if (error) return setToast({ type: "error", msg: `Void failed: ${error.message}` });
+    
+    if (error) {
+      return setToast({ type: "error", msg: `Delete failed: ${error.message}` });
+    }
+    
+    // Remove it from the active UI list immediately
     setRows((prev) => prev.filter((r) => r.id !== row.id));
-    setToast({ type: "success", msg: `${row.id} voided — excluded from analytics` });
+    setToast({ type: "success", msg: `${row.id} deleted (voided) and removed from active view` });
   }
 
   const visible = useMemo(() => {
@@ -374,9 +393,11 @@ export default function InvoicesPage() {
                         <div className="flex justify-end gap-1.5">
                           <button onClick={() => setEditing(r)} title="Edit invoice" className={`rounded-lg p-2 transition-colors ${s.button}`}><Pencil size={14} /></button>
                           <button onClick={() => router.push(`/invoices/${r.id}`)} title="View / print (VAT-compliant)" className={`rounded-lg p-2 transition-colors ${s.button}`}><Printer size={14} /></button>
-                          <button onClick={() => voidInvoice(r)} disabled={busyId === r.id + "void"} title="Void invoice (soft delete)"
+                          
+                          {/* Soft delete action using the Trash icon to match standard user expectations */}
+                          <button onClick={() => voidInvoice(r)} disabled={busyId === r.id + "void"} title="Delete invoice (Soft Delete)"
                             className="rounded-lg p-2 text-rose-400 transition-colors hover:bg-rose-500/10 disabled:opacity-40">
-                            {busyId === r.id + "void" ? <Loader2 size={14} className="animate-spin" /> : <Ban size={14} />}
+                            {busyId === r.id + "void" ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                           </button>
                         </div>
                       </td>
