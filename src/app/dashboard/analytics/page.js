@@ -94,7 +94,7 @@ export default function AnalyticsPage() {
   useEffect(() => {
     const fetchAll = async () => {
       const [inv, ctr, sf] = await Promise.all([
-        supabase.from("invoices").select("id, client, date, items, amount").order("date").range(0, 49999),
+        supabase.from("invoices").select("id, client, date, items, amount").eq("voided", false).order("date").range(0, 49999),
         supabase.from("contracts").select("client, mrr"),
         supabase.from("skip_fleet").select("size, owned, deployed").order("size"),
       ]);

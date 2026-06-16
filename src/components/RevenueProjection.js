@@ -38,9 +38,9 @@ import {
 /* ══════════════════════════════════════════════════════════════════════════
    TUNABLE PARAMETERS  — change these to reshape the projection
    ══════════════════════════════════════════════════════════════════════════ */
-const CONFIDENCE     = 90;     // 80 | 90 | 95  → coverage of the band (higher = wider)
+const CONFIDENCE     = 80;     // 80 | 90 | 95  → coverage of the band (higher = wider)
 const HORIZON_MONTHS = 3;      // how many months to project forward
-const MIN_HISTORY    = 4;      // months of real data required before a projection shows
+const MIN_HISTORY    = 3;      // months of real data required before a projection shows
 const CLAMP_FLOOR    = true;   // don't let the ad-hoc band dip below R0 (revenue can't be negative)
 
 /* ── Student-t two-sided critical values, t(α/2, df). df 1..30, then z. ──────
@@ -53,7 +53,7 @@ const T_TABLE = {
 const Z = { 80: 1.282, 90: 1.645, 95: 1.960 };
 const tCrit = (df) => (df >= 1 && df <= 30 ? T_TABLE[CONFIDENCE][df - 1] : Z[CONFIDENCE]);
 
-const ACCENT = { mrr: "#22d3ee", total: "#f59e0b", proj: "#a78bfa" };
+const ACCENT = { mrr: "#22d3ee", total: "#f59e0b", proj: "#2e196e" };
 const zar = (n) => new Intl.NumberFormat("en-ZA", { style: "currency", currency: "ZAR", maximumFractionDigits: 0 }).format(n || 0);
 const monthKey = (d) => { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}`; };
 const monthLabel = (key) => {

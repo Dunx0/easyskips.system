@@ -122,7 +122,7 @@ export default function Dashboard() {
   useEffect(() => {
     (async () => {
       const [inv, ctr, sf] = await Promise.all([
-        supabase.from("invoices").select("client,date,items,amount,banked,collected"),
+        supabase.from("invoices").select("client,date,items,amount,banked,collected").eq("voided",false),
         supabase.from("contracts").select("client,site,skips,size,mrr"),
         supabase.from("skip_fleet").select("size,label,owned").order("size"),
       ]);

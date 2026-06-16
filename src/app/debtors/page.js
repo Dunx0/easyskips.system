@@ -63,6 +63,7 @@ export default function DebtorsPage() {
       .from("invoices")
       .select("*")
       .eq("banked", false)
+      .eq("voided", false)
       .order("date");
     if (error) setToast({ type: "error", msg: error.message });
     setRows(
