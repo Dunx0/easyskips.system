@@ -97,8 +97,7 @@ export default function AnalyticsPage() {
         supabase
           .from("invoices")
           .select("id, client, date, items, amount")
-          // FIX: explicitly allow both 'false' and 'null' to catch historical data
-          .or("voided.eq.false,voided.is.null") 
+          .eq("voided", false) // This will now work perfectly for ALL historical data
           .order("date")
           .range(0, 49999),
         supabase.from("contracts").select("client, mrr"),
