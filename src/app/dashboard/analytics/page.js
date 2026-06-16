@@ -93,23 +93,26 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     const fetchAll = async () => {
-      // 1. Generate a timestamp that changes every millisecond
       const cacheBuster = new Date().getTime().toString(); 
 
       const [inv, ctr, sf] = await Promise.all([
         supabase
           .from("invoices")
-          .select("id, client, date, items, amount")
-          .neq("voided", true) 
+          // 1. ADD 'voided' to the select string so the frontend can actually see the true/false value
+          .select("id, client, date, items, amount, voided")
+          .neq("voided", true)
+          .neq("client", cacheBuster)
           .order("date")
-          // 2. Add this dummy filter. Because 'cacheBuster' is always unique, 
-          // Vercel's Edge CDN is forced to fetch fresh data every single time.
-          .neq("client", cacheBuster) 
           .range(0, 49999),
         supabase.from("contracts").select("client, mrr"),
         supabase.from("skip_fleet").select("size, owned, deployed").order("size"),
       ]);
-      setInvoices(inv.data ?? []);
+
+      // 2. THE KILL SWITCH: Force JavaScript to filter out anything that is true. 
+      // Even if Vercel caches a stale API response, this guarantees it never reaches your charts.
+      const cleanInvoices = (inv.data ?? []).filter(row => row.voided !== true);
+      
+      setInvoices(cleanInvoices);
       setContracts(ctr.data ?? []);
       if (sf.data && sf.data.length) setFleet(sf.data);
     };
