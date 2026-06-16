@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * INVOICES — src/app/invoices/page.js  (final)
- * · Edit modal uses a line-item builder (size+qty+price), parsed from items; amount auto-sums.
- * · Hard Delete: Permanently wipes the invoice and line items from the database.
- * · Print routes to /invoices/[id] — the SARS-compliant, VAT-aware document.
+ * LEDGER — src/app/invoices/page.js  (final)
+ * · Dual-view: Ad-hoc Invoices & Monthly Contracts.
+ * · Invoices: Edit line items, Hard Delete, Print (SARS-compliant).
+ * · Contracts: Edit MRR/details, Hard Delete.
  */
 
 import { useState, useEffect, useMemo, useCallback } from "react";
@@ -13,7 +13,7 @@ import { supabase } from "@/lib/supabase";
 import { useTheme } from "@/components/AppShell";
 import {
   Receipt, Search, Loader2, CheckCircle2, XCircle, Printer, RefreshCw,
-  Pencil, X, MapPin, Save, Plus, Trash2
+  Pencil, X, MapPin, Save, Plus, Trash2, FileSignature, LayoutList
 } from "lucide-react";
 
 const HIRE_TYPES = ["Daily", "Weekly", "Monthly"];
@@ -85,6 +85,8 @@ function FlagToggle({ s, on, onLabel, offLabel, busy, onClick }) {
   );
 }
 
+// --- MODALS ---
+
 function LineItems({ s, lines, setLines, hire }) {
   const update = (i, k, v) => setLines((p) => p.map((l, j) => (j === i ? { ...l, [k]: v } : l)));
   const changeSize = (i, size) => setLines((p) => p.map((l, j) => (j === i ? { ...l, size, price: rateFor(size, hire) } : l)));
@@ -123,7 +125,7 @@ function LineItems({ s, lines, setLines, hire }) {
   );
 }
 
-function EditModal({ s, invoice, onClose, onSaved, setToast }) {
+function InvoiceEditModal({ s, invoice, onClose, onSaved, setToast }) {
   const [form, setForm] = useState(null);
   const [lines, setLines] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -172,7 +174,7 @@ function EditModal({ s, invoice, onClose, onSaved, setToast }) {
         await supabase.from("invoice_line_items").insert(
           lines.map((l) => ({ invoice_id: invoice.id, skip_size: l.size, quantity: l.qty, unit_price: l.price }))
         );
-      } catch { /* table may not exist */ }
+      } catch { /* ignore if table not exists */ }
     }
     setBusy(false);
     if (error) return setToast({ type: "error", msg: `Save failed: ${error.message}` });
@@ -191,8 +193,7 @@ function EditModal({ s, invoice, onClose, onSaved, setToast }) {
       <form onSubmit={save} className={`relative max-h-[88vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-2xl p-6 shadow-2xl ${s.modal}`}>
         <div className="flex items-start justify-between">
           <div>
-            <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-[0.14em]"><Pencil size={14} className="text-amber-400" /> Edit {invoice.id}</h2>
-            <p className={`mt-0.5 text-[11px] ${s.faint}`}>Change quantities below — the amount recalculates automatically</p>
+            <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-[0.14em]"><Pencil size={14} className="text-amber-400" /> Edit Invoice {invoice.id}</h2>
           </div>
           <button type="button" onClick={onClose} className={`rounded-lg p-1.5 ${s.button}`}><X size={15} /></button>
         </div>
@@ -239,35 +240,128 @@ function EditModal({ s, invoice, onClose, onSaved, setToast }) {
   );
 }
 
-export default function InvoicesPage() {
+function ContractEditModal({ s, contract, onClose, onSaved, setToast }) {
+  const [form, setForm] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!contract) return;
+    setForm({
+      client: contract.client ?? "",
+      mrr: contract.mrr ?? 0,
+      status: contract.status ?? "active",
+      details: contract.details ?? "",
+    });
+  }, [contract]);
+
+  if (!contract || !form) return null;
+  const set = (k) => (e) => setForm((p) => ({ ...p, [k]: e.target.value }));
+
+  async function save(e) {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    
+    const patch = {
+      client: form.client.trim(),
+      mrr: Number(form.mrr),
+      status: form.status,
+      details: form.details.trim(),
+    };
+    
+    const { error } = await supabase.from("contracts").update(patch).eq("id", contract.id);
+    setBusy(false);
+    
+    if (error) return setToast({ type: "error", msg: `Save failed: ${error.message}` });
+    
+    setToast({ type: "success", msg: `Contract for ${patch.client} updated.` });
+    onSaved({ ...contract, ...patch });
+    onClose();
+  }
+
+  const input = `w-full rounded-xl px-3.5 py-2.5 text-sm outline-none transition-all ${s.input}`;
+  const select = `w-full rounded-xl px-3.5 py-2.5 text-sm outline-none ${s.select}`;
+  const label = `mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.12em] ${s.sub}`;
+
+  return (
+    <div className="fixed inset-0 z-[70] grid place-items-center px-4">
+      <div className="absolute inset-0 bg-black/70" onClick={onClose} />
+      <form onSubmit={save} className={`relative w-full max-w-md space-y-4 rounded-2xl p-6 shadow-2xl ${s.modal}`}>
+        <div className="flex items-start justify-between">
+          <div>
+            <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-[0.14em]"><FileSignature size={14} className="text-amber-400" /> Edit Contract</h2>
+          </div>
+          <button type="button" onClick={onClose} className={`rounded-lg p-1.5 ${s.button}`}><X size={15} /></button>
+        </div>
+
+        <label className="block"><span className={label}>Client Name</span>
+          <input required value={form.client} onChange={set("client")} className={input} /></label>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block"><span className={label}>Monthly Rate (MRR)</span>
+            <input required type="number" min="0" value={form.mrr} onChange={set("mrr")} className={`${input} tabular-nums`} /></label>
+          <label className="block"><span className={label}>Status</span>
+            <select value={form.status} onChange={set("status")} className={select}>
+              <option value="active">Active</option>
+              <option value="paused">Paused</option>
+              <option value="cancelled">Cancelled</option>
+            </select></label>
+        </div>
+
+        <label className="block"><span className={label}>Contract Details / Terms</span>
+          <textarea value={form.details} onChange={set("details")} rows={3} placeholder="e.g. 2x 6m³ skips swapped weekly" className={`${input} resize-none`} /></label>
+
+        <button type="submit" disabled={busy}
+          className={`mt-2 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold tracking-wide transition-all ${
+            busy ? "cursor-not-allowed bg-amber-500/40 text-[#0F0F13]/60" : "bg-gradient-to-br from-amber-400 to-orange-500 text-[#0F0F13] hover:brightness-105"}`}>
+          {busy ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}{busy ? "Saving…" : "Save Contract"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+// --- MAIN PAGE ---
+
+export default function LedgerPage() {
   const { dark } = useTheme();
   const s = T[dark ? "dark" : "light"];
   const router = useRouter();
 
-  const [rows, setRows] = useState([]);
+  // Tab State: "invoices" | "contracts"
+  const [activeTab, setActiveTab] = useState("invoices");
+
+  // Data States
+  const [invoices, setInvoices] = useState([]);
+  const [contracts, setContracts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("all");
+  
+  // Interaction States
   const [busyId, setBusyId] = useState(null);
-  const [editing, setEditing] = useState(null);
+  const [editingInvoice, setEditingInvoice] = useState(null);
+  const [editingContract, setEditingContract] = useState(null);
   const [toast, setToast] = useState(null);
 
-  const load = useCallback(async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
-    // Notice the void filter is completely gone now. We fetch everything that exists.
-    const { data, error } = await supabase
-      .from("invoices")
-      .select("*")
-      .order("date", { ascending: false })
-      .order("id", { ascending: false }) 
-      .limit(500);
+    
+    // Fetch both tables simultaneously
+    const [invRes, conRes] = await Promise.all([
+      supabase.from("invoices").select("*").order("date", { ascending: false }).order("id", { ascending: false }).limit(500),
+      supabase.from("contracts").select("*").order("id", { ascending: false }).limit(200)
+    ]);
       
-    if (error) setToast({ type: "error", msg: error.message });
-    setRows(data ?? []);
+    if (invRes.error) setToast({ type: "error", msg: `Invoices Error: ${invRes.error.message}` });
+    if (conRes.error) setToast({ type: "error", msg: `Contracts Error: ${conRes.error.message}` });
+    
+    setInvoices(invRes.data ?? []);
+    setContracts(conRes.data ?? []);
     setLoading(false);
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { loadData(); }, [loadData]);
   
   useEffect(() => {
     if (!toast) return;
@@ -275,55 +369,49 @@ export default function InvoicesPage() {
     return () => clearTimeout(id);
   }, [toast]);
 
-  async function flip(row, field) {
-    setBusyId(row.id + field);
+  // --- INVOICE ACTIONS ---
+
+  async function flipInvoiceFlag(row, field) {
+    setBusyId("inv_" + row.id + field);
     const next = !row[field];
-    setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, [field]: next } : r)));
+    setInvoices((prev) => prev.map((r) => (r.id === row.id ? { ...r, [field]: next } : r)));
     const { error } = await supabase.from("invoices").update({ [field]: next }).eq("id", row.id);
     if (error) {
-      setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, [field]: !next } : r)));
+      setInvoices((prev) => prev.map((r) => (r.id === row.id ? { ...r, [field]: !next } : r)));
       setToast({ type: "error", msg: `Update failed: ${error.message}` });
     }
     setBusyId(null);
   }
 
-  // The Hard Delete Function
   async function deleteInvoice(row) {
-    console.log("Delete triggered for:", row.id); // For debugging
-    
-    // Explicitly use window.confirm to bypass Next.js server-side blocking
-    if (!window.confirm(`PERMANENTLY delete invoice ${row.id} for ${row.client}?\n\nThis action cannot be undone.`)) {
-      return;
-    }
-    
-    setBusyId(row.id + "delete");
-    
-    // 1. Wipe line items first to prevent constraint blocks
-    try {
-      await supabase.from("invoice_line_items").delete().eq("invoice_id", row.id);
-    } catch (e) { console.log("Line items skip:", e); }
-
-    // 2. Wipe the invoice
+    if (!window.confirm(`PERMANENTLY delete invoice ${row.id} for ${row.client}?\n\nThis action cannot be undone.`)) return;
+    setBusyId("inv_" + row.id + "delete");
+    try { await supabase.from("invoice_line_items").delete().eq("invoice_id", row.id); } catch (e) {}
     const { error } = await supabase.from("invoices").delete().eq("id", row.id);
-    
     setBusyId(null);
-    
-    if (error) {
-      console.error("Supabase delete error:", error);
-      return setToast({ type: "error", msg: `Delete failed: Check RLS policies (${error.message})` });
-    }
-    
-    // 3. Remove from UI immediately
-    setRows((prev) => prev.filter((r) => r.id !== row.id));
+    if (error) return setToast({ type: "error", msg: `Delete failed: ${error.message}` });
+    setInvoices((prev) => prev.filter((r) => r.id !== row.id));
     setToast({ type: "success", msg: `${row.id} permanently deleted` });
-    
-    // 4. Force Next.js to dump cache
     router.refresh();
   }
 
-  const visible = useMemo(() => {
+  // --- CONTRACT ACTIONS ---
+
+  async function deleteContract(row) {
+    if (!window.confirm(`PERMANENTLY delete contract for ${row.client}?\n\nThis will remove their MRR from your analytics immediately.`)) return;
+    setBusyId("con_" + row.id + "delete");
+    const { error } = await supabase.from("contracts").delete().eq("id", row.id);
+    setBusyId(null);
+    if (error) return setToast({ type: "error", msg: `Delete failed: ${error.message}` });
+    setContracts((prev) => prev.filter((r) => r.id !== row.id));
+    setToast({ type: "success", msg: `Contract permanently deleted` });
+  }
+
+  // --- FILTERING ---
+
+  const visibleInvoices = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return rows.filter((r) => {
+    return invoices.filter((r) => {
       if (filter === "uncollected" && r.collected) return false;
       if (filter === "unbanked" && r.banked) return false;
       if (filter === "contract" && !r.contract_id) return false;
@@ -332,47 +420,82 @@ export default function InvoicesPage() {
       return [r.id, r.client, r.items, r.driver, r.vehicle, r.location, r.contract_id]
         .filter(Boolean).some((v) => String(v).toLowerCase().includes(needle));
     });
-  }, [rows, q, filter]);
+  }, [invoices, q, filter]);
 
-  const unbankedTotal = useMemo(
-    () => rows.filter((r) => !r.banked).reduce((sum, r) => sum + Number(r.amount || 0), 0), [rows]);
+  const visibleContracts = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return contracts.filter((c) => {
+      if (!needle) return true;
+      return [c.client, c.status, c.details]
+        .filter(Boolean).some((v) => String(v).toLowerCase().includes(needle));
+    });
+  }, [contracts, q]);
+
+  const unbankedTotal = useMemo(() => invoices.filter((r) => !r.banked).reduce((sum, r) => sum + Number(r.amount || 0), 0), [invoices]);
+  const activeMrrTotal = useMemo(() => contracts.filter((c) => c.status !== "cancelled").reduce((sum, c) => sum + Number(c.mrr || 0), 0), [contracts]);
 
   return (
     <div className="px-4 py-6 sm:px-8">
       <div className="mx-auto max-w-[1200px]">
-        <header className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        
+        <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h1 className="flex items-center gap-2.5 text-xl font-extrabold tracking-tight"><Receipt size={20} className="text-amber-400" /> Invoices</h1>
+            <h1 className="flex items-center gap-2.5 text-xl font-extrabold tracking-tight">
+              {activeTab === "invoices" ? <Receipt size={20} className="text-amber-400" /> : <FileSignature size={20} className="text-cyan-400" />} 
+              {activeTab === "invoices" ? "Invoices Ledger" : "Active Contracts"}
+            </h1>
             <p className={`mt-1 text-xs ${s.sub}`}>
-              Full history, fully editable ·{" "}
-              <span className="font-semibold tabular-nums text-rose-400">{zarShort.format(unbankedTotal)}</span> not yet banked
+              {activeTab === "invoices" 
+                ? <><span className="font-semibold tabular-nums text-rose-400">{zarShort.format(unbankedTotal)}</span> currently unbanked</>
+                : <><span className="font-semibold tabular-nums text-emerald-400">{zarShort.format(activeMrrTotal)}</span> active MRR</>
+              }
             </p>
           </div>
-          <button onClick={load} className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold ${s.button}`}>
-            <RefreshCw size={13} className={loading ? "animate-spin" : ""} /> Refresh
-          </button>
+          
+          <div className="flex items-center gap-3">
+            {/* TAB SWITCHER */}
+            <div className={`flex rounded-xl p-1 ${s.chipOff}`}>
+              <button onClick={() => setActiveTab("invoices")} 
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-all ${activeTab === "invoices" ? "bg-white/[0.1] text-amber-400 shadow-sm" : s.sub}`}>
+                <LayoutList size={14} /> Invoices
+              </button>
+              <button onClick={() => setActiveTab("contracts")} 
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-all ${activeTab === "contracts" ? "bg-white/[0.1] text-cyan-400 shadow-sm" : s.sub}`}>
+                <FileSignature size={14} /> Contracts
+              </button>
+            </div>
+            
+            <button onClick={loadData} className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold ${s.button}`}>
+              <RefreshCw size={13} className={loading ? "animate-spin" : ""} /> Refresh
+            </button>
+          </div>
         </header>
 
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <div className="relative min-w-[220px] flex-1">
             <Search size={14} className={`absolute left-3 top-1/2 -translate-y-1/2 ${s.faint}`} />
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search client, invoice no, location, contract…"
+            <input value={q} onChange={(e) => setQ(e.target.value)} 
+              placeholder={activeTab === "invoices" ? "Search client, invoice no, location…" : "Search contract client, details…"}
               className={`w-full rounded-xl py-2.5 pl-9 pr-3 text-sm outline-none transition-all ${s.input}`} />
           </div>
-          <div className="flex flex-wrap gap-1.5">
-            {FILTERS.map((f) => (
-              <button key={f.key} onClick={() => setFilter(f.key)}
-                className={`rounded-xl px-3 py-2 text-xs font-semibold transition-all ${filter === f.key ? "bg-amber-400 text-[#0F0F13]" : s.chipOff}`}>
-                {f.label}
-              </button>
-            ))}
-          </div>
+          {activeTab === "invoices" && (
+            <div className="flex flex-wrap gap-1.5">
+              {FILTERS.map((f) => (
+                <button key={f.key} onClick={() => setFilter(f.key)}
+                  className={`rounded-xl px-3 py-2 text-xs font-semibold transition-all ${filter === f.key ? "bg-amber-400 text-[#0F0F13]" : s.chipOff}`}>
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <section className={`rounded-2xl p-5 ${s.panel}`}>
-          {loading && rows.length === 0 ? (
+          {loading && (invoices.length === 0 || contracts.length === 0) ? (
             <div className="grid place-items-center py-14"><Loader2 size={22} className="animate-spin text-amber-400" /></div>
-          ) : (
+          ) : activeTab === "invoices" ? (
+            
+            // --- INVOICES TABLE ---
             <div className="overflow-x-auto">
               <table className="w-full min-w-[1020px] text-sm">
                 <thead>
@@ -383,13 +506,11 @@ export default function InvoicesPage() {
                   </tr>
                 </thead>
                 <tbody className={`divide-y ${s.divide}`}>
-                  {visible.map((r) => (
+                  {visibleInvoices.map((r) => (
                     <tr key={r.id} className={`transition-colors ${s.rowHover}`}>
                       <td className="py-3 pr-4">
                         <span className={`font-mono text-xs ${s.sub}`}>{r.id}</span>
-                        {r.contract_id && (
-                          <span className="ml-2 rounded-full bg-cyan-500/12 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-cyan-400 ring-1 ring-cyan-500/25" title={`Contract ${r.contract_id}`}>{r.contract_id}</span>
-                        )}
+                        {r.contract_id && <span className="ml-2 rounded-full bg-cyan-500/12 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-cyan-400 ring-1 ring-cyan-500/25">Contract</span>}
                       </td>
                       <td className="py-3 pr-4 font-medium">{r.client}</td>
                       <td className={`max-w-[160px] truncate py-3 pr-4 text-xs ${s.sub}`}>
@@ -398,28 +519,66 @@ export default function InvoicesPage() {
                       <td className={`py-3 pr-4 tabular-nums ${s.sub}`}>{r.date}</td>
                       <td className={`max-w-[180px] truncate py-3 pr-4 ${s.sub}`}>{r.items}</td>
                       <td className="py-3 pr-4 text-right font-semibold tabular-nums">{zarShort.format(r.amount)}</td>
-                      <td className="py-3 pr-4"><FlagToggle s={s} on={r.collected} onLabel="Collected" offLabel="On site" busy={busyId === r.id + "collected"} onClick={() => flip(r, "collected")} /></td>
-                      <td className="py-3 pr-4"><FlagToggle s={s} on={r.banked} onLabel="Banked" offLabel="Owed" busy={busyId === r.id + "banked"} onClick={() => flip(r, "banked")} /></td>
+                      <td className="py-3 pr-4"><FlagToggle s={s} on={r.collected} onLabel="Collected" offLabel="On site" busy={busyId === "inv_" + r.id + "collected"} onClick={() => flipInvoiceFlag(r, "collected")} /></td>
+                      <td className="py-3 pr-4"><FlagToggle s={s} on={r.banked} onLabel="Banked" offLabel="Owed" busy={busyId === "inv_" + r.id + "banked"} onClick={() => flipInvoiceFlag(r, "banked")} /></td>
                       <td className="py-3 text-right">
                         <div className="flex justify-end gap-1.5">
-                          <button onClick={() => setEditing(r)} title="Edit invoice" className={`rounded-lg p-2 transition-colors ${s.button}`}><Pencil size={14} /></button>
-                          <button onClick={() => router.push(`/invoices/${r.id}`)} title="View / print (VAT-compliant)" className={`rounded-lg p-2 transition-colors ${s.button}`}><Printer size={14} /></button>
-                          
-                          {/* The Hard Delete Button */}
-                          <button 
-                            onClick={() => deleteInvoice(r)} 
-                            disabled={busyId === r.id + "delete"} 
-                            title="Delete invoice permanently"
-                            className="rounded-lg p-2 text-rose-400 transition-colors hover:bg-rose-500/10 disabled:opacity-40"
-                          >
-                            {busyId === r.id + "delete" ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                          <button onClick={() => setEditingInvoice(r)} className={`rounded-lg p-2 transition-colors ${s.button}`}><Pencil size={14} /></button>
+                          <button onClick={() => router.push(`/invoices/${r.id}`)} className={`rounded-lg p-2 transition-colors ${s.button}`}><Printer size={14} /></button>
+                          <button onClick={() => deleteInvoice(r)} disabled={busyId === "inv_" + r.id + "delete"} className="rounded-lg p-2 text-rose-400 transition-colors hover:bg-rose-500/10 disabled:opacity-40">
+                            {busyId === "inv_" + r.id + "delete" ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                           </button>
-
                         </div>
                       </td>
                     </tr>
                   ))}
-                  {visible.length === 0 && <tr><td colSpan={9} className={`py-10 text-center text-sm ${s.faint}`}>No invoices match this view.</td></tr>}
+                  {visibleInvoices.length === 0 && <tr><td colSpan={9} className={`py-10 text-center text-sm ${s.faint}`}>No invoices match this view.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+            
+          ) : (
+            
+            // --- CONTRACTS TABLE ---
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[800px] text-sm">
+                <thead>
+                  <tr className={`border-b text-left text-[11px] font-semibold uppercase tracking-[0.12em] ${s.hairline} ${s.faint}`}>
+                    <th className="pb-2.5 pr-4">ID</th>
+                    <th className="pb-2.5 pr-4">Client</th>
+                    <th className="pb-2.5 pr-4">Status</th>
+                    <th className="pb-2.5 pr-4">Details</th>
+                    <th className="pb-2.5 pr-4 text-right">MRR</th>
+                    <th className="pb-2.5 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className={`divide-y ${s.divide}`}>
+                  {visibleContracts.map((c) => (
+                    <tr key={c.id} className={`transition-colors ${s.rowHover}`}>
+                      <td className={`py-3 pr-4 font-mono text-xs ${s.sub}`}>{c.id}</td>
+                      <td className="py-3 pr-4 font-bold">{c.client}</td>
+                      <td className="py-3 pr-4">
+                        <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ring-1 ${
+                          c.status === 'active' ? "bg-emerald-500/12 text-emerald-400 ring-emerald-500/25" : 
+                          c.status === 'paused' ? "bg-amber-500/12 text-amber-400 ring-amber-500/25" : 
+                          "bg-rose-500/12 text-rose-400 ring-rose-500/25"
+                        }`}>
+                          {c.status || 'active'}
+                        </span>
+                      </td>
+                      <td className={`max-w-[300px] truncate py-3 pr-4 text-xs ${s.sub}`}>{c.details || "—"}</td>
+                      <td className="py-3 pr-4 text-right font-bold text-emerald-400 tabular-nums">{zar.format(c.mrr)}</td>
+                      <td className="py-3 text-right">
+                        <div className="flex justify-end gap-1.5">
+                          <button onClick={() => setEditingContract(c)} className={`rounded-lg p-2 transition-colors ${s.button}`}><Pencil size={14} /></button>
+                          <button onClick={() => deleteContract(c)} disabled={busyId === "con_" + c.id + "delete"} className="rounded-lg p-2 text-rose-400 transition-colors hover:bg-rose-500/10 disabled:opacity-40">
+                            {busyId === "con_" + c.id + "delete" ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {visibleContracts.length === 0 && <tr><td colSpan={6} className={`py-10 text-center text-sm ${s.faint}`}>No contracts match this view.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -427,8 +586,11 @@ export default function InvoicesPage() {
         </section>
       </div>
 
-      <EditModal s={s} invoice={editing} onClose={() => setEditing(null)} setToast={setToast}
-        onSaved={(updated) => setRows((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))} />
+      <InvoiceEditModal s={s} invoice={editingInvoice} onClose={() => setEditingInvoice(null)} setToast={setToast}
+        onSaved={(updated) => setInvoices((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))} />
+        
+      <ContractEditModal s={s} contract={editingContract} onClose={() => setEditingContract(null)} setToast={setToast}
+        onSaved={(updated) => setContracts((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))} />
 
       {toast && (
         <div className="pointer-events-none fixed inset-x-0 bottom-6 z-[60] flex justify-center px-4">
