@@ -288,27 +288,28 @@ export default function InvoicesPage() {
   }
 
   // Soft delete implementation
-async function voidInvoice(row) {
-    if (!confirm(`Delete invoice ${row.id} for ${row.client}?\n\nThis will remove it from your active view and unbanked totals, but keep it securely on record for audit purposes (Soft Delete).`)) return;
+async function deleteInvoice(row) {
+    if (!confirm(`PERMANENTLY delete invoice ${row.id} for ${row.client}?\n\nThis action cannot be undone and will permanently remove it from your analytics.`)) return;
     
-    setBusyId(row.id + "void");
+    setBusyId(row.id + "delete");
     
-    const { error } = await supabase
-      .from("invoices")
-      .update({ voided: true })
-      .eq("id", row.id);
-      
+    // 1. Delete associated line items first to prevent Foreign Key constraint errors
+    try {
+      await supabase.from("invoice_line_items").delete().eq("invoice_id", row.id);
+    } catch { /* Ignore if table doesn't exist */ }
+
+    // 2. Hard delete the invoice
+    const { error } = await supabase.from("invoices").delete().eq("id", row.id);
+    
     setBusyId(null);
     
     if (error) {
       return setToast({ type: "error", msg: `Delete failed: ${error.message}` });
     }
     
-    // TELL NEXT.JS TO DUMP ITS INTERNAL CACHE:
-    router.refresh(); 
-    
+    // Remove from the UI
     setRows((prev) => prev.filter((r) => r.id !== row.id));
-    setToast({ type: "success", msg: `${row.id} deleted (voided) and removed from active view` });
+    setToast({ type: "success", msg: `${row.id} permanently deleted` });
   }
 
   const visible = useMemo(() => {
