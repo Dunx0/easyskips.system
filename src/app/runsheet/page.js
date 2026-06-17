@@ -1,17 +1,10 @@
 "use client";
 
 /**
- * ─────────────────────────────────────────────────────────────────────────────
- *  DAILY RUN SHEET — apps/dispatch/src/app/runsheet/page.js
- *
- *  The page the yard actually uses each morning:
- *    DELIVERIES  = scheduled orders with delivery_date = today (or overdue)
- *    COLLECTIONS = invoices past the 7-day standard hire, not yet collected
- *  Sorted by suburb so the route roughly plans itself. One print button →
- *  a clean monochrome A4 sheet for the driver's clipboard.
- *
- *  Add to AppShell NAV:  { href: "/runsheet", label: "Run Sheet", icon: ClipboardList }
- * ─────────────────────────────────────────────────────────────────────────────
+ * DAILY RUN SHEET — src/app/runsheet/page.js
+ *  DELIVERIES  = scheduled orders due today or overdue
+ *  COLLECTIONS = invoices past the 7-day standard hire, not yet collected
+ *  Now updates in REAL TIME: subscribes to orders + invoices changes.
  */
 
 import { useState, useEffect, useCallback } from "react";
@@ -19,7 +12,7 @@ import { supabase } from "@/lib/supabase";
 import { useTheme } from "@/components/AppShell";
 import {
   ClipboardList, Truck, Undo2, Printer, RefreshCw, Loader2,
-  Phone, MapPin, CheckCircle2, XCircle,
+  Phone, MapPin, CheckCircle2, XCircle, Radio,
 } from "lucide-react";
 
 const STANDARD_RENTAL_DAYS = 7;
@@ -51,27 +44,24 @@ export default function RunSheetPage() {
   const [collections, setCollections] = useState([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
+  const [pulse, setPulse] = useState(false);
 
   const load = useCallback(async () => {
-    setLoading(true);
     const cutoff = new Date(Date.now() - STANDARD_RENTAL_DAYS * DAY).toISOString().slice(0, 10);
 
     const [del, col] = await Promise.all([
-      // scheduled orders due today or earlier (missed yesterday's = still on the sheet)
       supabase.from("orders").select("*")
         .eq("status", "scheduled")
         .lte("delivery_date", todayISO())
         .order("suburb"),
-      // skips out past standard hire, not collected
       supabase.from("invoices").select("*")
         .eq("collected", false)
+        .eq("voided", false)
         .lte("date", cutoff)
         .order("date"),
     ]);
 
-    if (del.error || col.error) {
-      setToast({ type: "error", msg: (del.error || col.error).message });
-    }
+    if (del.error || col.error) setToast({ type: "error", msg: (del.error || col.error).message });
     setDeliveries(del.data ?? []);
     setCollections(
       (col.data ?? []).map((r) => ({
@@ -83,13 +73,24 @@ export default function RunSheetPage() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  /* realtime: re-pull the sheet whenever orders or invoices change */
+  useEffect(() => {
+    const flash = () => { setPulse(true); setTimeout(() => setPulse(false), 1200); };
+    const channel = supabase
+      .channel("runsheet-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => { load(); flash(); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "invoices" }, () => { load(); flash(); })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [load]);
+
   useEffect(() => {
     if (!toast) return;
     const id = setTimeout(() => setToast(null), 4000);
     return () => clearTimeout(id);
   }, [toast]);
 
-  /* mark a delivery done (order → delivered) */
   async function markDelivered(order) {
     const { error } = await supabase.from("orders").update({ status: "delivered" }).eq("id", order.id);
     if (error) return setToast({ type: "error", msg: error.message });
@@ -97,7 +98,6 @@ export default function RunSheetPage() {
     setToast({ type: "success", msg: `Delivered — ${order.name}, ${order.suburb}` });
   }
 
-  /* mark a collection done (invoice.collected = true) */
   async function markCollected(inv) {
     const { error } = await supabase.from("invoices").update({ collected: true }).eq("id", inv.id);
     if (error) return setToast({ type: "error", msg: error.message });
@@ -110,14 +110,17 @@ export default function RunSheetPage() {
   return (
     <div className="px-4 py-6 sm:px-8">
       <div className="mx-auto max-w-[1000px]">
-        {/* ── HEADER (screen) ─────────────────────────────────────────── */}
         <header className="mb-6 flex flex-wrap items-center justify-between gap-3 print:hidden">
           <div>
             <h1 className="flex items-center gap-2.5 text-xl font-extrabold tracking-tight">
               <ClipboardList size={20} className="text-amber-400" /> Daily Run Sheet
             </h1>
-            <p className={`mt-1 text-xs ${s.sub}`}>
+            <p className={`mt-1 flex items-center gap-1.5 text-xs ${s.sub}`}>
               {longToday()} · {totalStops} stop{totalStops === 1 ? "" : "s"} ({deliveries.length} deliveries, {collections.length} collections)
+              <span className={`ml-1 flex items-center gap-1 transition-opacity ${pulse ? "opacity-100" : "opacity-60"}`}>
+                <Radio size={11} className={pulse ? "text-emerald-400" : "text-zinc-500"} />
+                <span className={pulse ? "text-emerald-400" : "text-zinc-500"}>live</span>
+              </span>
             </p>
           </div>
           <div className="flex gap-2">
@@ -136,9 +139,7 @@ export default function RunSheetPage() {
             <Loader2 size={22} className="animate-spin text-amber-400" />
           </div>
         ) : (
-          /* id used by print CSS — everything inside prints, chrome doesn't */
           <div id="print-doc" className="space-y-4 print:space-y-6 print:text-zinc-900">
-            {/* print-only letterhead */}
             <div className="hidden print:block">
               <h1 className="text-xl font-extrabold">Run Sheet — {longToday()}</h1>
               <p className="text-xs text-zinc-500">
@@ -146,7 +147,6 @@ export default function RunSheetPage() {
               </p>
             </div>
 
-            {/* ── DELIVERIES ───────────────────────────────────────────── */}
             <section className={`rounded-2xl p-5 print:rounded-none print:border-0 print:p-0 ${s.panel}`}>
               <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-[0.14em] print:text-zinc-900">
                 <Truck size={15} className="text-amber-400" /> Deliveries ({deliveries.length})
@@ -184,7 +184,6 @@ export default function RunSheetPage() {
               )}
             </section>
 
-            {/* ── COLLECTIONS ──────────────────────────────────────────── */}
             <section className={`rounded-2xl p-5 print:rounded-none print:border-0 print:p-0 ${s.panel}`}>
               <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-[0.14em] print:text-zinc-900">
                 <Undo2 size={15} className="text-cyan-400" /> Collections due ({collections.length})
@@ -220,7 +219,6 @@ export default function RunSheetPage() {
         )}
       </div>
 
-      {/* print isolation */}
       <style jsx global>{`
         @media print {
           body * { visibility: hidden; }
