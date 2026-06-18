@@ -8,6 +8,8 @@
 
 import RevenueProjection from "@/components/RevenueProjection";
 import { useState, useEffect, useMemo } from "react";
+import Link from "next/link";
+import { FileText } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useTheme } from "@/components/AppShell";
 import { ResponsiveContainer, PieChart, Pie, Cell } from "recharts";

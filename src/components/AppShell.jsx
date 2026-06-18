@@ -53,16 +53,17 @@ export const useTheme = () => useContext(ThemeContext);
 
 const NAV = [
   { href: "/",          label: "Dashboard", icon: LayoutDashboard, roles: ["owner"] },
+  { href: "/report", label: "Report", icon: FileText, roles: ["owner"] },
   { href: "/analytics", label: "Analytics", icon: BarChart3,       roles: ["owner"] },
   { href: "/debtors",   label: "Debtors",   icon: Hourglass,       roles: ["owner"] },
   { href: "/clients",   label: "Clients",   icon: Users,           roles: ["owner"] },
   { href: "/fleet",     label: "Fleet",     icon: Truck,           roles: ["owner"] },
-  { href: "/dispatch",  label: "Dispatch",  icon: Send,            roles: ["admin"] },
+  { href: "/dispatch",  label: "Dispatch",  icon: Send,            roles: ["owner","admin"] },
   { href: "/quoute",    label: "Quotes",    icon: FileText,        roles: ["admin"] }, // matches your folder spelling
   { href: "/orders",    label: "Orders",    icon: Inbox,           roles: ["admin"] },
   { href: "/invoices",  label: "Invoices",  icon: Receipt,         roles: ["owner", "admin"] },
   { href: "/runsheet",  label: "Run Sheet", icon: ClipboardList,   roles: ["owner", "admin"] },
-  { href: "/settings",  label: "Settings",  icon: Settings,        roles: ["owner"] },
+  { href: "/settings",  label: "Settings",  icon: Settings,        roles: ["owner", "admin"] },
 ];
 
 /* ════════════════════════════════════════════════════════════════════════════
