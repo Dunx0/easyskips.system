@@ -26,10 +26,11 @@ const ROUTE_ROLES = {
   "/settings":  ["owner"],
   "/invoices":  ["owner", "admin"],   // both — owner views, admin edits (RLS guards writes)
   "/runsheet":  ["owner", "admin"],
-  "/dispatch":  ["admin"],
+  "/dispatch":  ["admin", "owner"],
   "/quotes":    ["admin"],
   "/quoutes":   ["admin"],            // current folder spelling
   "/orders":    ["admin"],
+  "/report": ["owner"],
 };
 
 /* where each role lands when they hit a route that isn't theirs */
