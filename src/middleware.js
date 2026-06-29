@@ -21,6 +21,7 @@ const ROUTE_ROLES = {
   "/dashboard": ["owner"],
   "/analytics": ["owner"],
   "/debtors":   ["owner"],
+  "/contracts": ["owner", "admin"],
   "/clients":   ["owner"],
   "/fleet":     ["owner"],
   "/settings":  ["owner"],
