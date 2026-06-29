@@ -8,6 +8,7 @@
  */
 
 import { useState, useEffect, useMemo, useCallback } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useTheme } from "@/components/AppShell";
@@ -605,7 +606,9 @@ export default function LedgerPage() {
                         <div className="flex justify-end gap-1.5">
                           <button onClick={() => setEditingContract(c)} className={`rounded-lg p-2 transition-colors ${s.button}`}><Pencil size={14} /></button>
                           {/* NEW: Printer Button for Contracts */}
-                          <button onClick={() => router.push(`/contracts/${c.id}`)} className={`rounded-lg p-2 transition-colors ${s.button}`}><Printer size={14} /></button>
+                          <Link href={`/contracts/${c.id}`} className={`rounded-lg p-2 transition-colors ${s.button}`}>
+                            <Printer size={14} />
+                          </Link>
                           <button onClick={() => deleteContract(c)} disabled={busyId === "con_" + c.id + "delete"} className="rounded-lg p-2 text-rose-400 transition-colors hover:bg-rose-500/10 disabled:opacity-40">
                             {busyId === "con_" + c.id + "delete" ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                           </button>
