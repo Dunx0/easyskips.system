@@ -4,7 +4,7 @@
  * LEDGER — src/app/invoices/page.js  (final)
  * · Dual-view: Ad-hoc Invoices & Monthly Contracts.
  * · Invoices: Edit line items, Hard Delete, Print (SARS-compliant).
- * · Contracts: Edit MRR/details, Hard Delete.
+ * · Contracts: Edit line items (MRR auto-calculates), Hard Delete, Print.
  */
 
 import { useState, useEffect, useMemo, useCallback } from "react";
@@ -242,17 +242,31 @@ function InvoiceEditModal({ s, invoice, onClose, onSaved, setToast }) {
 
 function ContractEditModal({ s, contract, onClose, onSaved, setToast }) {
   const [form, setForm] = useState(null);
+  const [lines, setLines] = useState([]);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (!contract) return;
     setForm({
       client: contract.client ?? "",
-      mrr: contract.mrr ?? 0,
       status: contract.status ?? "active",
       details: contract.details ?? "",
     });
+
+    // Try to pull actual contract line items from DB, fallback to generic sizes if missing
+    supabase.from("contract_line_items").select("*").eq("contract_id", contract.id).then(({ data }) => {
+      if (data && data.length > 0) {
+        setLines(data.map(d => ({ size: d.skip_size, qty: d.quantity, price: d.monthly_rate })));
+      } else {
+        const defaultQty = contract.skips || 1;
+        const defaultPrice = contract.mrr ? Math.round(contract.mrr / defaultQty) : 0;
+        setLines([{ size: contract.size || "6m³", qty: defaultQty, price: defaultPrice }]);
+      }
+    });
   }, [contract]);
+
+  const mrr = useMemo(() => lines.reduce((sum, l) => sum + l.qty * l.price, 0), [lines]);
+  const skips = useMemo(() => lines.reduce((sum, l) => sum + l.qty, 0), [lines]);
 
   if (!contract || !form) return null;
   const set = (k) => (e) => setForm((p) => ({ ...p, [k]: e.target.value }));
@@ -262,14 +276,27 @@ function ContractEditModal({ s, contract, onClose, onSaved, setToast }) {
     if (busy) return;
     setBusy(true);
     
+    const primarySize = [...lines].sort((a, b) => b.qty - a.qty)[0]?.size ?? "6m³";
+
     const patch = {
       client: form.client.trim(),
-      mrr: Number(form.mrr),
+      mrr: mrr,
+      skips: skips,
+      size: primarySize,
       status: form.status,
       details: form.details.trim(),
     };
     
     const { error } = await supabase.from("contracts").update(patch).eq("id", contract.id);
+    if (!error) {
+      try {
+        await supabase.from("contract_line_items").delete().eq("contract_id", contract.id);
+        await supabase.from("contract_line_items").insert(
+          lines.map((l) => ({ contract_id: contract.id, skip_size: l.size, quantity: l.qty, monthly_rate: l.price }))
+        );
+      } catch { /* ignore if table not exists */ }
+    }
+    
     setBusy(false);
     
     if (error) return setToast({ type: "error", msg: `Save failed: ${error.message}` });
@@ -286,10 +313,10 @@ function ContractEditModal({ s, contract, onClose, onSaved, setToast }) {
   return (
     <div className="fixed inset-0 z-[70] grid place-items-center px-4">
       <div className="absolute inset-0 bg-black/70" onClick={onClose} />
-      <form onSubmit={save} className={`relative w-full max-w-md space-y-4 rounded-2xl p-6 shadow-2xl ${s.modal}`}>
+      <form onSubmit={save} className={`relative max-h-[88vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-2xl p-6 shadow-2xl ${s.modal}`}>
         <div className="flex items-start justify-between">
           <div>
-            <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-[0.14em]"><FileSignature size={14} className="text-amber-400" /> Edit Contract</h2>
+            <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-[0.14em]"><FileSignature size={14} className="text-cyan-400" /> Edit Contract</h2>
           </div>
           <button type="button" onClick={onClose} className={`rounded-lg p-1.5 ${s.button}`}><X size={15} /></button>
         </div>
@@ -297,23 +324,28 @@ function ContractEditModal({ s, contract, onClose, onSaved, setToast }) {
         <label className="block"><span className={label}>Client Name</span>
           <input required value={form.client} onChange={set("client")} className={input} /></label>
 
-        <div className="grid grid-cols-2 gap-3">
-          <label className="block"><span className={label}>Monthly Rate (MRR)</span>
-            <input required type="number" min="0" value={form.mrr} onChange={set("mrr")} className={`${input} tabular-nums`} /></label>
-          <label className="block"><span className={label}>Status</span>
-            <select value={form.status} onChange={set("status")} className={select}>
-              <option value="active">Active</option>
-              <option value="paused">Paused</option>
-              <option value="cancelled">Cancelled</option>
-            </select></label>
+        <label className="block"><span className={label}>Status</span>
+          <select value={form.status} onChange={set("status")} className={select}>
+            <option value="active">Active</option>
+            <option value="paused">Paused</option>
+            <option value="cancelled">Cancelled</option>
+          </select></label>
+
+        <div>
+          <span className={label}>Committed Skips (Monthly)</span>
+          <LineItems s={s} lines={lines} setLines={setLines} hire="Monthly" />
+          <div className={`mt-2 flex items-center justify-between rounded-xl px-3.5 py-2.5 ${s.chipOff}`}>
+            <span className="text-xs">{skips} permanent skip{skips !== 1 ? "s" : ""}</span>
+            <span className="text-base font-extrabold tabular-nums text-cyan-400">{zar.format(mrr)}<span className="text-[10px] font-normal opacity-60 ml-1">/mo</span></span>
+          </div>
         </div>
 
         <label className="block"><span className={label}>Contract Details / Terms</span>
-          <textarea value={form.details} onChange={set("details")} rows={3} placeholder="e.g. 2x 6m³ skips swapped weekly" className={`${input} resize-none`} /></label>
+          <textarea value={form.details} onChange={set("details")} rows={2} placeholder="e.g. Swapped weekly on Tuesdays" className={`${input} resize-none`} /></label>
 
         <button type="submit" disabled={busy}
           className={`mt-2 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold tracking-wide transition-all ${
-            busy ? "cursor-not-allowed bg-amber-500/40 text-[#0F0F13]/60" : "bg-gradient-to-br from-amber-400 to-orange-500 text-[#0F0F13] hover:brightness-105"}`}>
+            busy ? "cursor-not-allowed bg-cyan-500/40 text-[#0F0F13]/60" : "bg-gradient-to-br from-cyan-400 to-sky-500 text-[#0F0F13] hover:brightness-105"}`}>
           {busy ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}{busy ? "Saving…" : "Save Contract"}
         </button>
       </form>
@@ -400,6 +432,7 @@ export default function LedgerPage() {
   async function deleteContract(row) {
     if (!window.confirm(`PERMANENTLY delete contract for ${row.client}?\n\nThis will remove their MRR from your analytics immediately.`)) return;
     setBusyId("con_" + row.id + "delete");
+    try { await supabase.from("contract_line_items").delete().eq("contract_id", row.id); } catch (e) {}
     const { error } = await supabase.from("contracts").delete().eq("id", row.id);
     setBusyId(null);
     if (error) return setToast({ type: "error", msg: `Delete failed: ${error.message}` });
@@ -571,6 +604,8 @@ export default function LedgerPage() {
                       <td className="py-3 text-right">
                         <div className="flex justify-end gap-1.5">
                           <button onClick={() => setEditingContract(c)} className={`rounded-lg p-2 transition-colors ${s.button}`}><Pencil size={14} /></button>
+                          {/* NEW: Printer Button for Contracts */}
+                          <button onClick={() => router.push(`/contracts/${c.id}`)} className={`rounded-lg p-2 transition-colors ${s.button}`}><Printer size={14} /></button>
                           <button onClick={() => deleteContract(c)} disabled={busyId === "con_" + c.id + "delete"} className="rounded-lg p-2 text-rose-400 transition-colors hover:bg-rose-500/10 disabled:opacity-40">
                             {busyId === "con_" + c.id + "delete" ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                           </button>
