@@ -29,7 +29,7 @@ const ROUTE_ROLES = {
   "/dispatch":  ["admin", "owner"],
   "/quotes":    ["admin"],
   "/quoutes":   ["admin"],            // current folder spelling
-  "/orders":    ["admin"],
+  "/orders":    ["owner","admin"],
   "/report": ["owner"],
 };
 

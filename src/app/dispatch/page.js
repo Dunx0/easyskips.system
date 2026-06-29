@@ -1,10 +1,9 @@
 "use client";
 
 /**
- * DISPATCH & BILLING — src/app/dispatch/page.js  (v4)
- * Rate card is now LIVE: fetched from the `rates` table (size, label, daily,
- * weekly, monthly) — the same data Settings edits. Falls back to a built-in
- * card only if the table is empty. Multi-skip line items preserved.
+ * DISPATCH & BILLING — src/app/dispatch/page.js  (v5 - VAT Handling)
+ * Rate card is LIVE. Ad-Hoc deliveries default to Inclusive of VAT.
+ * Contracts default to Exclusive of VAT (strips 15% off the settings rate).
  */
 
 import { useState, useEffect, useMemo, useCallback } from "react";
@@ -28,6 +27,8 @@ const HIRE_TYPES = ["Daily", "Weekly", "Monthly"];
 const PAYMENT_METHODS = ["EFT", "Card", "Cash", "Account"];
 const VEHICLES = ["HZN 442 GP — Hino 500", "JKL 918 GP — Isuzu FTR", "DLM 207 GP — UD Croner"];
 const DRIVERS = ["Sipho M.", "Johan v.d. Berg", "Thabo K.", "Pieter S."];
+
+const VAT_DIVISOR = 1.15; // South African standard 15% VAT
 
 const zar = new Intl.NumberFormat("en-ZA", { style: "currency", currency: "ZAR", maximumFractionDigits: 0 });
 const today = () => new Date().toISOString().slice(0, 10);
@@ -101,13 +102,20 @@ function SubmitButton({ busy, label, busyLabel, icon: Icon }) {
   );
 }
 
-/* LINE ITEM BUILDER — now takes the live `rates` card as a prop */
+/* LINE ITEM BUILDER — handles VAT split based on priceMode */
 function LineItems({ s, lines, setLines, hire, priceMode, rates }) {
   const rateFor = (size, h) => {
     const r = rates.find((x) => x.size === size);
     return r ? Number(r[h.toLowerCase()]) || 0 : 0;
   };
-  const defaultPrice = (size) => priceMode === "monthly" ? rateFor(size, "Monthly") : rateFor(size, hire);
+  
+  // Calculate default price: Strip VAT for contracts, keep for ad-hoc
+  const defaultPrice = (size) => {
+    if (priceMode === "monthly") {
+      return Math.round(rateFor(size, "Monthly") / VAT_DIVISOR);
+    }
+    return rateFor(size, hire);
+  };
 
   const update = (idx, key, val) => setLines((prev) => prev.map((l, i) => (i === idx ? { ...l, [key]: val } : l)));
   const changeSize = (idx, size) =>
@@ -121,11 +129,13 @@ function LineItems({ s, lines, setLines, hire, priceMode, rates }) {
 
   return (
     <div className="space-y-2">
-      <div className={`grid grid-cols-[1fr_64px_104px_92px_32px] gap-2 px-1 text-[10px] font-semibold uppercase tracking-[0.1em] ${s.faint}`}>
-        <span>Skip size</span><span>Qty</span><span>{priceMode === "monthly" ? "Rate/mo" : "Price"}</span><span className="text-right">Total</span><span />
+      <div className={`grid grid-cols-[1fr_64px_114px_92px_32px] gap-2 px-1 text-[10px] font-semibold uppercase tracking-[0.1em] ${s.faint}`}>
+        <span>Skip size</span><span>Qty</span>
+        <span>{priceMode === "monthly" ? "Rate/mo (ex)" : "Price (inc)"}</span>
+        <span className="text-right">Total</span><span />
       </div>
       {lines.map((line, idx) => (
-        <div key={idx} className="grid grid-cols-[1fr_64px_104px_92px_32px] items-center gap-2">
+        <div key={idx} className="grid grid-cols-[1fr_64px_114px_92px_32px] items-center gap-2">
           <select value={line.size} onChange={(e) => changeSize(idx, e.target.value)}
             className={`rounded-lg px-2.5 py-2 text-sm outline-none ${s.select}`}>
             {rates.map((x) => <option key={x.size} value={x.size}>{x.label || x.size}</option>)}
@@ -133,7 +143,7 @@ function LineItems({ s, lines, setLines, hire, priceMode, rates }) {
           <input type="number" min="1" value={line.qty}
             onChange={(e) => update(idx, "qty", Math.max(1, parseInt(e.target.value) || 1))}
             className={`rounded-lg px-2.5 py-2 text-sm tabular-nums outline-none ${s.input}`} />
-          <input type="number" min="0" step="50" value={line.price}
+          <input type="number" min="0" step="1" value={line.price}
             onChange={(e) => update(idx, "price", Number(e.target.value) || 0)}
             className={`rounded-lg px-2.5 py-2 text-sm tabular-nums outline-none ${s.input}`} />
           <span className="text-right text-sm font-semibold tabular-nums">{zar.format(line.qty * line.price)}</span>
@@ -193,11 +203,11 @@ export default function DispatchPage() {
     setOpenExtras(e.data ?? []);
     setClientNames((n.data ?? []).map((x) => x.name));
 
-    // seed default line prices from the freshly loaded card
+    // seed default line prices (stripping VAT for the contract)
     const firstSize = liveRates[0]?.size ?? "6m³";
     const wkly = liveRates.find((x) => x.size === firstSize);
     setInvLines([{ size: firstSize, qty: 1, price: wkly ? Number(wkly.weekly) || 0 : 0 }]);
-    setContractLines([{ size: firstSize, qty: 1, price: wkly ? Number(wkly.monthly) || 0 : 0 }]);
+    setContractLines([{ size: firstSize, qty: 1, price: wkly ? Math.round((Number(wkly.monthly) || 0) / VAT_DIVISOR) : 0 }]);
   }, []);
 
   useEffect(() => { loadContext(); }, [loadContext]);
@@ -259,7 +269,7 @@ export default function DispatchPage() {
       const newMrr = Math.round(matchedContract.mrr + perSkip * invoiceSkips);
       const { error } = await supabase.from("contracts").update({ skips: newSkips, mrr: newMrr }).eq("id", matchedContract.id);
       if (error) throw new Error(error.message);
-      setToast({ type: "success", msg: `${matchedContract.id} adjusted → ${newSkips}× skips @ ${zar.format(newMrr)}/mo. No invoice created.` });
+      setToast({ type: "success", msg: `${matchedContract.id} adjusted → ${newSkips}× skips @ ${zar.format(newMrr)}/mo (ex). No invoice created.` });
       setDelivery({ ...EMPTY_DELIVERY, date: today() });
       loadContext();
     } catch (err) {
@@ -423,7 +433,9 @@ export default function DispatchPage() {
                 <span className={`text-xs ${s.sub}`}>
                   {invoiceSkips} skip{invoiceSkips !== 1 ? "s" : ""} across {invLines.length} line{invLines.length !== 1 ? "s" : ""} · {delivery.hire.toLowerCase()}
                 </span>
-                <span className="text-lg font-extrabold tabular-nums">{zar.format(invoiceAmount)}</span>
+                <span className="text-lg font-extrabold tabular-nums">
+                  {zar.format(invoiceAmount)} <span className="text-[10px] font-normal opacity-60 ml-1">incl VAT</span>
+                </span>
               </div>
 
               <SubmitButton busy={submittingInvoice}
@@ -464,7 +476,7 @@ export default function DispatchPage() {
                 <p className={`mt-1 tabular-nums ${s.sub}`}>
                   {contractSkips} permanent skip{contractSkips === 1 ? "" : "s"}
                   {contractForm.site ? ` @ ${contractForm.site}` : ""} ·{" "}
-                  <span className="font-bold text-cyan-400">{zar.format(contractMrr)}/mo</span> ={" "}
+                  <span className="font-bold text-cyan-400">{zar.format(contractMrr)}/mo</span> <span className="text-[10px] opacity-60">ex VAT</span> ={" "}
                   <span className="font-semibold">{zar.format(contractMrr * 12)}/yr</span>
                 </p>
               </div>
